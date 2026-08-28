@@ -1,102 +1,28 @@
-import { DurableObject } from 'cloudflare:workers';
-
-const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type,authorization', 'access-control-allow-methods': 'GET,POST,PUT,OPTIONS' } });
 const now = () => Date.now();
 const id = () => crypto.randomUUID();
-const normalizePhone = (value) => {
-  const raw = String(value || '').replace(/[\s()-]/g, '');
-  if (/^0\d{9}$/.test(raw)) return '+254' + raw.slice(1);
-  if (/^254\d{9}$/.test(raw)) return '+' + raw;
-  if (/^\+254\d{9}$/.test(raw)) return raw;
-  throw new Error('Enter a valid Kenyan phone number.');
-};
-const hex = (bytes) => [...new Uint8Array(bytes)].map(b => b.toString(16).padStart(2,'0')).join('');
-async function hashPassword(password, salt = crypto.randomUUID()) {
-  const data = new TextEncoder().encode(salt + ':' + password);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return `${salt}:${hex(digest)}`;
-}
-async function verifyPassword(password, stored) {
-  const [salt] = String(stored).split(':');
-  return (await hashPassword(password, salt)) === stored;
-}
-async function getUser(request, env) {
-  const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (!token) return null;
-  return env.DB.prepare(`SELECT u.id,u.phone,u.name,u.avatar_key FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND s.expires_at>?`).bind(token, now()).first();
-}
+const normalizePhone = (value) => { const raw=String(value||'').replace(/[\s()-]/g,''); if(/^0\d{9}$/.test(raw)) return '+254'+raw.slice(1); if(/^254\d{9}$/.test(raw)) return '+'+raw; if(/^\+254\d{9}$/.test(raw)) return raw; throw new Error('Enter a valid Kenyan phone number.'); };
+const hex = bytes => [...new Uint8Array(bytes)].map(b=>b.toString(16).padStart(2,'0')).join('');
+async function hashPassword(password,salt=crypto.randomUUID()){const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+password));return `${salt}:${hex(digest)}`;}
+async function verifyPassword(password,stored){const [salt]=String(stored||'').split(':');return Boolean(salt)&&(await hashPassword(password,salt))===stored;}
+async function getUser(request,env){const token=request.headers.get('authorization')?.replace(/^Bearer\s+/i,'');if(!token)return null;return env.DB.prepare(`SELECT u.id,u.phone,u.name,u.avatar_key FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=? AND s.expires_at>?`).bind(token,now()).first();}
+const publicUser=u=>u&&({id:u.id,phone:u.phone,name:u.name,avatarKey:u.avatar_key||null});
+async function directConversation(env,a,b){const found=await env.DB.prepare(`SELECT c.id FROM conversations c JOIN conversation_members x ON x.conversation_id=c.id JOIN conversation_members y ON y.conversation_id=c.id WHERE c.type='direct' AND x.user_id=? AND y.user_id=? LIMIT 1`).bind(a,b).first();if(found?.id)return found.id;const cid=id(),t=now();await env.DB.prepare('INSERT INTO conversations(id,type,created_at) VALUES(?,?,?)').bind(cid,'direct',t).run();await env.DB.prepare('INSERT INTO conversation_members(conversation_id,user_id) VALUES(?,?),(?,?)').bind(cid,a,cid,b).run();return cid;}
 
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const path = url.pathname.replace(/^\/api/, '');
-    try {
-      if (request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin':'*','access-control-allow-headers':'content-type,authorization','access-control-allow-methods':'GET,POST,PUT,DELETE,OPTIONS' }});
-      if (path === '/health') return json({ ok:true, service:'zuno-api', time:now() });
+export default { async fetch(request,env){const url=new URL(request.url);const path=url.pathname.replace(/^\/api/,'');try{
+if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{'access-control-allow-origin':'*','access-control-allow-headers':'content-type,authorization','access-control-allow-methods':'GET,POST,PUT,OPTIONS'}});
+if(path==='/health')return json({ok:true,service:'zuno-api',time:now()});
+if(request.method==='POST'&&path==='/auth/register'){const {name,phone,password}=await request.json();if(!name?.trim()||!password||password.length<8)return json({error:'Name and an 8+ character password are required.'},400);const normalized=normalizePhone(phone);if(await env.DB.prepare('SELECT id FROM users WHERE phone=?').bind(normalized).first())return json({error:'A ZUNO account already exists for this phone number.'},409);const t=now(),userId=id(),sessionId=id();await env.DB.prepare('INSERT INTO users(id,phone,name,password_hash,created_at,updated_at) VALUES(?,?,?,?,?,?)').bind(userId,normalized,name.trim(),await hashPassword(password),t,t).run();await env.DB.prepare('INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)').bind(sessionId,userId,t+2592000000,t).run();return json({token:sessionId,user:{id:userId,phone:normalized,name:name.trim(),avatarKey:null}},201);}
+if(request.method==='POST'&&path==='/auth/login'){const {phone,password}=await request.json();const normalized=normalizePhone(phone);const u=await env.DB.prepare('SELECT * FROM users WHERE phone=?').bind(normalized).first();if(!u||!(await verifyPassword(password,u.password_hash)))return json({error:'Incorrect phone number or password.'},401);const t=now(),sessionId=id();await env.DB.prepare('INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)').bind(sessionId,u.id,t+2592000000,t).run();return json({token:sessionId,user:publicUser(u)});}
+const user=await getUser(request,env);if(!user)return json({error:'Authentication required.'},401);
+if(request.method==='GET'&&path==='/me')return json({user:publicUser(user)});
+if(request.method==='POST'&&path==='/auth/logout'){const token=request.headers.get('authorization')?.replace(/^Bearer\s+/i,'');await env.DB.prepare('DELETE FROM sessions WHERE id=?').bind(token).run();return json({ok:true});}
+if(request.method==='GET'&&path==='/users'){const q=(url.searchParams.get('q')||'').trim().toLowerCase();const rows=q?await env.DB.prepare('SELECT id,phone,name,avatar_key FROM users WHERE id<>? AND (lower(name) LIKE ? OR phone LIKE ?) ORDER BY name LIMIT 100').bind(user.id,`%${q}%`,`%${q}%`).all():await env.DB.prepare('SELECT id,phone,name,avatar_key FROM users WHERE id<>? ORDER BY name LIMIT 100').bind(user.id).all();return json({users:(rows.results||[]).map(publicUser)});}
+if(request.method==='GET'&&path==='/messages'){const withUser=url.searchParams.get('with');if(!withUser)return json({error:'with is required.'},400);const conversationId=await directConversation(env,user.id,withUser);const rows=await env.DB.prepare('SELECT id,sender_id,body,created_at,read_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC LIMIT 500').bind(conversationId).all();return json({conversationId,messages:rows.results||[]});}
+if(request.method==='POST'&&path==='/messages'){const {recipientId,body}=await request.json();const text=String(body||'').trim();if(!recipientId||!text)return json({error:'recipientId and body are required.'},400);if(recipientId===user.id)return json({error:'You cannot message yourself.'},400);if(!await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(recipientId).first())return json({error:'Recipient not found.'},404);const conversationId=await directConversation(env,user.id,recipientId),messageId=id(),t=now();await env.DB.prepare('INSERT INTO messages(id,conversation_id,sender_id,body,created_at) VALUES(?,?,?,?,?)').bind(messageId,conversationId,user.id,text,t).run();if(env.CHAT_ROOMS){const room=env.CHAT_ROOMS.idFromName(conversationId);await env.CHAT_ROOMS.get(room).fetch('https://zuno.internal/broadcast',{method:'POST',body:JSON.stringify({type:'message',payload:{id:messageId,conversationId,senderId:user.id,recipientId,body:text,createdAt:t}})});}return json({message:{id:messageId,conversationId,senderId:user.id,recipientId,body:text,createdAt:t}},201);}
+if(request.method==='POST'&&path==='/profile/avatar'){const ct=request.headers.get('content-type')||'';if(!ct.startsWith('image/'))return json({error:'Upload an image.'},400);const bytes=await request.arrayBuffer();if(bytes.byteLength>5*1024*1024)return json({error:'Profile picture must be 5MB or smaller.'},413);const key=`avatars/${user.id}/${crypto.randomUUID()}`;await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:ct}});if(user.avatar_key)await env.MEDIA.delete(user.avatar_key);await env.DB.prepare('UPDATE users SET avatar_key=?,updated_at=? WHERE id=?').bind(key,now(),user.id).run();return json({avatarKey:key});}
+if(request.method==='GET'&&path.startsWith('/media/')){const key=decodeURIComponent(path.slice('/media/'.length));const object=await env.MEDIA.get(key);if(!object)return new Response('Not found',{status:404});return new Response(object.body,{headers:{'content-type':object.httpMetadata?.contentType||'application/octet-stream'}});}
+if(path==='/ws'&&request.headers.get('Upgrade')?.toLowerCase()==='websocket'){const roomId=url.searchParams.get('room');if(!roomId)return json({error:'room is required.'},400);return env.CHAT_ROOMS.get(env.CHAT_ROOMS.idFromName(roomId)).fetch(request);}
+return json({error:'Not found'},404);}catch(error){console.error(error);return json({error:error?.message||'Server error'},500);}}};
 
-      if (request.method === 'POST' && path === '/auth/register') {
-        const { name, phone, password } = await request.json();
-        if (!name?.trim() || !password || password.length < 8) return json({ error:'Name and an 8+ character password are required.' },400);
-        const normalized = normalizePhone(phone);
-        const exists = await env.DB.prepare('SELECT id FROM users WHERE phone=?').bind(normalized).first();
-        if (exists) return json({ error:'A ZUNO account already exists for this phone number.' },409);
-        const userId = id(), timestamp = now();
-        await env.DB.prepare('INSERT INTO users(id,phone,name,password_hash,created_at,updated_at) VALUES(?,?,?,?,?,?)').bind(userId,normalized,name.trim(),await hashPassword(password),timestamp,timestamp).run();
-        const sessionId=id();
-        await env.DB.prepare('INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)').bind(sessionId,userId,timestamp+2592000000,timestamp).run();
-        return json({ token:sessionId, user:{id:userId,phone:normalized,name:name.trim(),avatarKey:null} },201);
-      }
-
-      if (request.method === 'POST' && path === '/auth/login') {
-        const { phone, password } = await request.json();
-        const normalized=normalizePhone(phone);
-        const user=await env.DB.prepare('SELECT * FROM users WHERE phone=?').bind(normalized).first();
-        if (!user || !(await verifyPassword(password,user.password_hash))) return json({ error:'Incorrect phone number or password.' },401);
-        const sessionId=id(), timestamp=now();
-        await env.DB.prepare('INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)').bind(sessionId,user.id,timestamp+2592000000,timestamp).run();
-        return json({ token:sessionId,user:{id:user.id,phone:user.phone,name:user.name,avatarKey:user.avatar_key} });
-      }
-
-      const user=await getUser(request,env);
-      if (!user) return json({error:'Authentication required.'},401);
-      if (request.method==='GET' && path==='/me') return json({user});
-      if (request.method==='POST' && path==='/auth/logout') {
-        const token=request.headers.get('authorization')?.replace(/^Bearer\s+/i,'');
-        await env.DB.prepare('DELETE FROM sessions WHERE id=?').bind(token).run();
-        return json({ok:true});
-      }
-      if (request.method==='POST' && path==='/profile/avatar') {
-        const contentType=request.headers.get('content-type')||'';
-        if (!contentType.startsWith('image/')) return json({error:'Upload an image.'},400);
-        const bytes=await request.arrayBuffer();
-        if (bytes.byteLength>5*1024*1024) return json({error:'Profile picture must be 5MB or smaller.'},413);
-        const key=`avatars/${user.id}/${crypto.randomUUID()}`;
-        await env.MEDIA.put(key,bytes,{httpMetadata:{contentType}});
-        if (user.avatar_key) await env.MEDIA.delete(user.avatar_key);
-        await env.DB.prepare('UPDATE users SET avatar_key=?,updated_at=? WHERE id=?').bind(key,now(),user.id).run();
-        return json({avatarKey:key});
-      }
-      if (request.method==='GET' && path.startsWith('/media/')) {
-        const key=decodeURIComponent(path.slice('/media/'.length));
-        const object=await env.MEDIA.get(key);
-        if (!object) return new Response('Not found',{status:404});
-        return new Response(object.body,{headers:{'content-type':object.httpMetadata?.contentType||'application/octet-stream','cache-control':'private, max-age=3600'}});
-      }
-      return json({error:'Not found'},404);
-    } catch (error) { return json({error:error.message||'Server error'},500); }
-  }
-};
-
-export class ChatRoom extends DurableObject {
-  async fetch(request) {
-    if (request.headers.get('Upgrade') !== 'websocket') return new Response('WebSocket required',{status:426});
-    const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1]);
-    return new Response(null,{status:101,webSocket:pair[0]});
-  }
-  async webSocketMessage(ws,message) {
-    const payload=JSON.stringify({type:'message',payload:message,at:now()});
-    for (const client of this.ctx.getWebSockets()) client.send(payload);
-  }
-  async webSocketClose(ws,code,reason) { ws.close(code,reason); }
-}
+export class ChatRoom { constructor(ctx){this.ctx=ctx;} async fetch(request){if(request.method==='POST'){const payload=await request.text();for(const ws of this.ctx.getWebSockets())ws.send(payload);return new Response('ok');}if(request.headers.get('Upgrade')!=='websocket')return new Response('WebSocket required',{status:426});const pair=new WebSocketPair();this.ctx.acceptWebSocket(pair[1]);return new Response(null,{status:101,webSocket:pair[0]});}async webSocketMessage(ws,message){for(const client of this.ctx.getWebSockets())client.send(JSON.stringify({type:'message',payload:typeof message==='string'?message:'binary',at:now()}));}async webSocketClose(ws,code,reason){ws.close(code,reason);}}
