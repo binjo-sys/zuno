@@ -9,7 +9,7 @@ database_id = "ce0472e8-1fcd-49f0-a9cf-b7f6ae8fc48c"
 migrations_dir = "migrations"
 
 [[durable_objects.bindings]]
-name = "CHAT_ROOM"
+name = "CHAT_ROOMS"
 class_name = "ChatRoom"
 
 [[migrations]]
