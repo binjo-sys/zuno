@@ -1,18 +1,15 @@
 name = "zuno-api"
 main = "src/index.js"
-compatibility_date = "2026-08-27"
+compatibility_date = "2026-08-28"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "zuno-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
-
-[[r2_buckets]]
-binding = "MEDIA"
-bucket_name = "zuno-media"
+database_id = "ce0472e8-1fcd-49f0-a9cf-b7f6ae8fc48c"
+migrations_dir = "migrations"
 
 [[durable_objects.bindings]]
-name = "CHAT_ROOMS"
+name = "CHAT_ROOM"
 class_name = "ChatRoom"
 
 [[migrations]]
