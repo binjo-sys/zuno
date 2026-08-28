@@ -1,0 +1,7 @@
+{
+  "name": "zuno-api",
+  "private": true,
+  "type": "module",
+  "scripts": {"deploy":"wrangler deploy","migrate":"wrangler d1 migrations apply zuno-db --remote","check":"wrangler deploy --dry-run"},
+  "devDependencies": {"wrangler":"latest","typescript":"latest","@cloudflare/workers-types":"latest"}
+}
