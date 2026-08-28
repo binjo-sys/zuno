@@ -1,3 +1,30 @@
-CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT, created_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at);
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  phone TEXT UNIQUE,
+  avatar TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  sender_id TEXT NOT NULL,
+  recipient_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(sender_id) REFERENCES users(id),
+  FOREIGN KEY(recipient_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS messages_pair_idx ON messages(sender_id, recipient_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS users_phone_idx ON users(phone);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
