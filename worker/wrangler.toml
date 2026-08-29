@@ -5,7 +5,7 @@ compatibility_date = "2026-08-27"
 [[d1_databases]]
 binding = "DB"
 database_name = "zuno-db"
-database_id = "REPLACE_WITH_CLOUDFLARE_D1_DATABASE_ID"
+database_id = "ce0472e8-1fcd-49f0-a9cf-b7f6ae8fc48c"
 
 [[durable_objects.bindings]]
 name = "CHAT_ROOM"
