@@ -10,6 +10,7 @@ export const api={
  logout:async()=>request('/auth/logout',{method:'POST'}),
  me:async()=>{const r=await request('/me');return r.user},
  updateMe:async(patch)=>{const r=await request('/me',{method:'PATCH',body:JSON.stringify(patch)});return r.user},
+ presence:async()=>request('/presence',{method:'POST'}),
  users:async(q='')=>{const r=await request(`/users${q?`?q=${encodeURIComponent(q)}`:''}`);return r.users||[]},
  messages:async(withUser)=>{const r=await request(`/messages?with=${encodeURIComponent(withUser)}`);return r.messages||[]},
  sendMessage:async(recipientId,body)=>{const r=await request('/messages',{method:'POST',body:JSON.stringify({recipientId,body})});return r.message},
