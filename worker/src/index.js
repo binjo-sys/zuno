@@ -6,95 +6,59 @@ const normalizePhone=(value='')=>{const raw=String(value).trim().replace(/[\s()-
 const hash=async(value)=>{const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('');};
 const publicUser=u=>({id:u.id,name:u.name,phone:u.phone,avatar:u.avatar||'',createdAt:u.created_at});
 async function ensureSchema(env){
-  await env.DB.batch([
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS zuno_v2_users (id TEXT PRIMARY KEY, phone TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, avatar TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS zuno_v2_sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL)"),
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS zuno_v2_messages (id TEXT PRIMARY KEY, sender_id TEXT NOT NULL, recipient_id TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS zuno_v2_users_phone_idx ON zuno_v2_users(phone)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS zuno_v2_sessions_user_idx ON zuno_v2_sessions(user_id)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS zuno_v2_messages_pair_idx ON zuno_v2_messages(sender_id, recipient_id, created_at)")
-  ]);
-  try{
-    await env.DB.prepare(`INSERT OR IGNORE INTO zuno_v2_users(id,phone,name,password_hash,avatar,created_at,updated_at) SELECT id,phone,name,password_hash,'',created_at,updated_at FROM users`).run();
-  }catch(e){ console.log('Legacy users migration skipped:',String(e)); }
+ await env.DB.exec(`CREATE TABLE IF NOT EXISTS zuno_v2_users (id TEXT PRIMARY KEY,phone TEXT NOT NULL UNIQUE,name TEXT NOT NULL,password_hash TEXT NOT NULL,avatar TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS zuno_v2_sessions (token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,created_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS zuno_v2_messages (id TEXT PRIMARY KEY,sender_id TEXT NOT NULL,recipient_id TEXT NOT NULL,body TEXT NOT NULL,created_at INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS zuno_v2_users_phone_idx ON zuno_v2_users(phone); CREATE INDEX IF NOT EXISTS zuno_v2_sessions_user_idx ON zuno_v2_sessions(user_id); CREATE INDEX IF NOT EXISTS zuno_v2_messages_pair_idx ON zuno_v2_messages(sender_id,recipient_id,created_at);`);
+ try{await env.DB.exec(`INSERT OR IGNORE INTO zuno_v2_users(id,phone,name,password_hash,avatar,created_at,updated_at) SELECT id,phone,name,password_hash,COALESCE(avatar,''),created_at,updated_at FROM users;`)}catch(e){console.log('legacy migration skipped',String(e))}
 }
 async function sessionToken(env,userId){const token=crypto.randomUUID()+crypto.randomUUID();await env.DB.prepare('INSERT INTO zuno_v2_sessions(token_hash,user_id,created_at) VALUES(?,?,?)').bind(await hash(token),userId,Date.now()).run();return token;}
 async function authByToken(token,env){if(!token)return null;const row=await env.DB.prepare('SELECT s.token_hash,s.user_id,s.created_at,u.id,u.name,u.phone,u.avatar,u.password_hash,u.created_at,u.updated_at FROM zuno_v2_sessions s JOIN zuno_v2_users u ON u.id=s.user_id WHERE s.token_hash=?').bind(await hash(token)).first();if(!row||Date.now()-row.created_at>2592000000){if(row)await env.DB.prepare('DELETE FROM zuno_v2_sessions WHERE token_hash=?').bind(row.token_hash).run();return null;}return {tokenHash:row.token_hash,user:row};}
 async function auth(request,env){const h=request.headers.get('authorization')||'';return authByToken(h.startsWith('Bearer ')?h.slice(7).trim():'',env);}
 
 export default{async fetch(request,env){
-  if(request.method==='OPTIONS')return json(null);
-  const url=new URL(request.url);
-  try{
-    await ensureSchema(env);
-    if(url.pathname==='/api/health')return json({ok:true,service:'zuno-api'});
-
-    if(url.pathname==='/api/auth/register'&&request.method==='POST'){
-      const b=await request.json();const name=b.name?.trim()||'',phone=normalizePhone(b.phone),password=b.password||'';
-      if(!name||!/^\+254[17]\d{8}$/.test(phone)||password.length<6)return json({error:'Enter your full name, valid Kenyan phone number and a 6+ character password.'},400);
-      if(await env.DB.prepare('SELECT id FROM zuno_v2_users WHERE phone=?').bind(phone).first())return json({error:'An account with that phone number already exists.'},409);
-      const id=crypto.randomUUID(),now=Date.now();await env.DB.prepare('INSERT INTO zuno_v2_users(id,phone,name,password_hash,avatar,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').bind(id,phone,name,await hash(password),'',now,now).run();
-      const token=await sessionToken(env,id);return json({token,user:{id,name,phone,avatar:''}},201);
-    }
-
-    if(url.pathname==='/api/auth/login'&&request.method==='POST'){
-      const b=await request.json();const phone=normalizePhone(b.phone),password=b.password||'';
-      const u=await env.DB.prepare('SELECT id,name,phone,avatar,password_hash,created_at,updated_at FROM zuno_v2_users WHERE phone=?').bind(phone).first();
-      if(!u||u.password_hash!==await hash(password))return json({error:'Incorrect phone number or password.'},401);
-      const token=await sessionToken(env,u.id);return json({token,user:publicUser(u)});
-    }
-
-    if(url.pathname==='/api/auth/logout'&&request.method==='POST'){
-      const a=await auth(request,env);if(a)await env.DB.prepare('DELETE FROM zuno_v2_sessions WHERE token_hash=?').bind(a.tokenHash).run();return json({ok:true});
-    }
-
-    const a=await auth(request,env);if(!a)return json({error:'Authentication required.'},401);
-
-    if(url.pathname==='/api/me'&&request.method==='GET')return json({user:publicUser(a.user)});
-    if(url.pathname==='/api/me'&&request.method==='PATCH'){
-      const b=await request.json(),name=b.name?.trim(),avatar=b.avatar||'';
-      if(name&&name.length<2)return json({error:'Name is too short.'},400);
-      if(avatar.length>1500000)return json({error:'Profile photo is too large.'},400);
-      await env.DB.prepare('UPDATE zuno_v2_users SET name=COALESCE(?,name),avatar=?,updated_at=? WHERE id=?').bind(name||null,avatar,Date.now(),a.user.id).run();
-      const u=await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM zuno_v2_users WHERE id=?').bind(a.user.id).first();return json({user:u?publicUser(u):null});
-    }
-
-    if(url.pathname==='/api/users'&&request.method==='GET'){
-      const q=url.searchParams.get('q')?.trim().toLowerCase()||'';
-      const rows=q?await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM zuno_v2_users WHERE id<>? AND (lower(name) LIKE ? OR phone LIKE ?) ORDER BY name LIMIT 100').bind(a.user.id,`%${q}%`,`%${q}%`).all():await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM zuno_v2_users WHERE id<>? ORDER BY name LIMIT 100').bind(a.user.id).all();
-      return json({users:rows.results.map(publicUser)});
-    }
-
-    if(url.pathname==='/api/messages'&&request.method==='GET'){
-      const withUser=url.searchParams.get('with');if(!withUser)return json({error:'with is required.'},400);
-      const rows=await env.DB.prepare('SELECT id,sender_id,recipient_id,body,created_at FROM zuno_v2_messages WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?) ORDER BY created_at ASC LIMIT 500').bind(a.user.id,withUser,withUser,a.user.id).all();
-      return json({messages:rows.results});
-    }
-
-    if(url.pathname==='/api/messages'&&request.method==='POST'){
-      const b=await request.json(),recipientId=b.recipientId||'',body=b.body?.trim()||'';
-      if(!recipientId||!body)return json({error:'recipientId and body are required.'},400);
-      if(body.length>5000)return json({error:'Message is too long.'},400);
-      if(!await env.DB.prepare('SELECT id FROM zuno_v2_users WHERE id=?').bind(recipientId).first())return json({error:'User not found.'},404);
-      const id=crypto.randomUUID(),createdAt=Date.now();
-      await env.DB.prepare('INSERT INTO zuno_v2_messages(id,sender_id,recipient_id,body,created_at) VALUES(?,?,?,?,?)').bind(id,a.user.id,recipientId,body,createdAt).run();
-      return json({message:{id,senderId:a.user.id,recipientId,body,createdAt}},201);
-    }
-
-    if(url.pathname==='/ws'&&request.headers.get('Upgrade')?.toLowerCase()==='websocket'){
-      const b=url.searchParams.get('b')||'',token=url.searchParams.get('token')||'';const aa=await authByToken(token,env);if(!aa)return json({error:'Authentication required.'},401);if(!b)return json({error:'b is required'},400);
-      const room=env.CHAT_ROOM.idFromName([aa.user.id,b].sort().join(':'));return env.CHAT_ROOM.get(room).fetch(request);
-    }
-
-    return json({error:'Not found'},404);
-  }catch(e){console.error(String(e));return json({error:'Server error'},500);}
+ if(request.method==='OPTIONS')return json(null);
+ const url=new URL(request.url);
+ try{
+  await ensureSchema(env);
+  if(url.pathname==='/api/health')return json({ok:true,service:'zuno-api'});
+  if(url.pathname==='/api/auth/register'&&request.method==='POST'){
+   const b=await request.json();const name=b.name?.trim()||'',phone=normalizePhone(b.phone),password=b.password||'';
+   if(!name||!/^\+254[17]\d{8}$/.test(phone)||password.length<6)return json({error:'Enter your full name, valid Kenyan phone number and a 6+ character password.'},400);
+   if(await env.DB.prepare('SELECT id FROM zuno_v2_users WHERE phone=?').bind(phone).first())return json({error:'An account with that phone number already exists.'},409);
+   const id=crypto.randomUUID(),now=Date.now();await env.DB.prepare('INSERT INTO zuno_v2_users(id,phone,name,password_hash,avatar,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').bind(id,phone,name,await hash(password),'',now,now).run();const token=await sessionToken(env,id);return json({token,user:{id,name,phone,avatar:''}},201);
+  }
+  if(url.pathname==='/api/auth/login'&&request.method==='POST'){
+   const b=await request.json();const phone=normalizePhone(b.phone),password=b.password||'';
+   const u=await env.DB.prepare('SELECT id,name,phone,avatar,password_hash,created_at,updated_at FROM zuno_v2_users WHERE phone=?').bind(phone).first();
+   if(!u||u.password_hash!==await hash(password))return json({error:'Incorrect phone number or password.'},401);
+   const token=await sessionToken(env,u.id);return json({token,user:publicUser(u)});
+  }
+  if(url.pathname==='/api/auth/logout'&&request.method==='POST'){const a=await auth(request,env);if(a)await env.DB.prepare('DELETE FROM zuno_v2_sessions WHERE token_hash=?').bind(a.tokenHash).run();return json({ok:true});}
+  const a=await auth(request,env);if(!a)return json({error:'Authentication required.'},401);
+  if(url.pathname==='/api/me'&&request.method==='GET')return json({user:publicUser(a.user)});
+  if(url.pathname==='/api/me'&&request.method==='PATCH'){
+   const b=await request.json(),name=b.name?.trim(),avatar=b.avatar||'';if(name&&name.length<2)return json({error:'Name is too short.'},400);if(avatar.length>1500000)return json({error:'Profile photo is too large.'},400);await env.DB.prepare('UPDATE zuno_v2_users SET name=COALESCE(?,name),avatar=?,updated_at=? WHERE id=?').bind(name||null,avatar,Date.now(),a.user.id).run();const u=await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM zuno_v2_users WHERE id=?').bind(a.user.id).first();return json({user:u?publicUser(u):null});
+  }
+  if(url.pathname==='/api/users'&&request.method==='GET'){
+   const q=url.searchParams.get('q')?.trim().toLowerCase()||'';const rows=q?await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM zuno_v2_users WHERE id<>? AND (lower(name) LIKE ? OR phone LIKE ?) ORDER BY name LIMIT 100').bind(a.user.id,`%${q}%`,`%${q}%`).all():await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM zuno_v2_users WHERE id<>? ORDER BY name LIMIT 100').bind(a.user.id).all();return json({users:rows.results.map(publicUser)});
+  }
+  if(url.pathname==='/api/messages'&&request.method==='GET'){
+   const withUser=url.searchParams.get('with');if(!withUser)return json({error:'with is required.'},400);const rows=await env.DB.prepare('SELECT id,sender_id,recipient_id,body,created_at FROM zuno_v2_messages WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?) ORDER BY created_at ASC LIMIT 500').bind(a.user.id,withUser,withUser,a.user.id).all();return json({messages:rows.results});
+  }
+  if(url.pathname==='/api/messages'&&request.method==='POST'){
+   const b=await request.json(),recipientId=b.recipientId||'',body=b.body?.trim()||'';if(!recipientId||!body)return json({error:'recipientId and body are required.'},400);if(body.length>5000)return json({error:'Message is too long.'},400);if(!await env.DB.prepare('SELECT id FROM zuno_v2_users WHERE id=?').bind(recipientId).first())return json({error:'User not found.'},404);const id=crypto.randomUUID(),createdAt=Date.now();await env.DB.prepare('INSERT INTO zuno_v2_messages(id,sender_id,recipient_id,body,created_at) VALUES(?,?,?,?,?)').bind(id,a.user.id,recipientId,body,createdAt).run();return json({message:{id,senderId:a.user.id,recipientId,body,createdAt}},201);
+  }
+  if(url.pathname==='/ws'&&request.headers.get('Upgrade')?.toLowerCase()==='websocket'){
+   const b=url.searchParams.get('b')||'',token=url.searchParams.get('token')||'';const aa=await authByToken(token,env);if(!aa)return json({error:'Authentication required.'},401);if(!b)return json({error:'b is required'},400);const room=env.CHAT_ROOM.idFromName([aa.user.id,b].sort().join(':'));return env.CHAT_ROOM.get(room).fetch(request);
+  }
+  return json({error:'Not found'},404);
+ }catch(e){
+  console.error(String(e));
+  if(url.pathname==='/api/auth/login'||url.pathname==='/api/auth/register')return json({error:'Server error',diagnostic:String(e).slice(0,240)},500);
+  return json({error:'Server error'},500);
+ }
 }};
 
 export class ChatRoom extends DurableObject{
-  async fetch(request){
-    if(request.method==='POST'){const message=await request.text();for(const ws of this.ctx.getWebSockets())if(ws.readyState===WebSocket.OPEN)ws.send(message);return new Response('ok');}
-    const pair=new WebSocketPair(),[client,server]=Object.values(pair);this.ctx.acceptWebSocket(server);return new Response(null,{status:101,webSocket:client});
-  }
-  async webSocketMessage(ws,message){for(const conn of this.ctx.getWebSockets())if(conn!==ws&&conn.readyState===WebSocket.OPEN)conn.send(typeof message==='string'?message:'binary');}
-  async webSocketClose(ws,code,reason){try{ws.close(code,reason)}catch{}}
+ async fetch(request){if(request.method==='POST'){const message=await request.text();for(const ws of this.ctx.getWebSockets())if(ws.readyState===WebSocket.OPEN)ws.send(message);return new Response('ok');}const pair=new WebSocketPair(),[client,server]=Object.values(pair);this.ctx.acceptWebSocket(server);return new Response(null,{status:101,webSocket:client});}
+ async webSocketMessage(ws,message){for(const conn of this.ctx.getWebSockets())if(conn!==ws&&conn.readyState===WebSocket.OPEN)conn.send(typeof message==='string'?message:'binary');}
+ async webSocketClose(ws,code,reason){try{ws.close(code,reason)}catch{}}
 }
