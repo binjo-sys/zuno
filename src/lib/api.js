@@ -5,7 +5,7 @@ export const saveSession=(value)=>localStorage.setItem(SESSION_KEY,JSON.stringif
 export const clearSession=()=>localStorage.removeItem(SESSION_KEY);
 async function request(path,options={}){const session=getSession();const headers=new Headers(options.headers||{});if(options.body && !headers.has('content-type') && !(options.body instanceof Blob))headers.set('content-type','application/json');if(session?.token)headers.set('authorization',`Bearer ${session.token}`);const res=await fetch(`${API_BASE}${path}`,{...options,headers});let data=null;try{data=await res.json()}catch{}if(!res.ok)throw new Error(data?.error||`Request failed (${res.status})`);return data}
 export const api={
- register:async(name,phone,password)=>request('/auth/register',{method:'POST',body:JSON.stringify({name,phone,password})}),
+ register:async(name,phone,password,username='',about='')=>request('/auth/register',{method:'POST',body:JSON.stringify({name,phone,password,username,about})}),
  login:async(phone,password)=>request('/auth/login',{method:'POST',body:JSON.stringify({phone,password})}),
  logout:async()=>request('/auth/logout',{method:'POST'}),
  me:async()=>{const r=await request('/me');return r.user},
