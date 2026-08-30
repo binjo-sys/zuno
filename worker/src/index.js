@@ -4,11 +4,13 @@ const CORS={"content-type":"application/json","access-control-allow-origin":"*",
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:CORS});
 const normalizePhone=(value='')=>{const raw=String(value).trim().replace(/[\s()-]/g,'');if(/^\+254[17]\d{8}$/.test(raw))return raw;if(/^254[17]\d{8}$/.test(raw))return `+${raw}`;if(/^0[17]\d{8}$/.test(raw))return `+254${raw.slice(1)}`;return raw;};
 const hash=async(value)=>{const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('');};
-const publicUser=u=>({id:u.id,name:u.name,phone:u.phone,avatar:u.avatar||'',createdAt:u.created_at});
+const publicUser=u=>({id:u.id,name:u.name,phone:u.phone,avatar:u.avatar||'',createdAt:u.created_at,lastSeen:u.last_seen||0});
 
 async function ensureSchema(env){
   const cols=await env.DB.prepare('PRAGMA table_info(users)').all();
-  if(!(cols.results||[]).some(c=>c.name==='avatar'))await env.DB.exec("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''");
+  const names=(cols.results||[]).map(c=>c.name);
+  if(!names.includes('avatar'))await env.DB.exec("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''");
+  if(!names.includes('last_seen'))await env.DB.exec("ALTER TABLE users ADD COLUMN last_seen INTEGER NOT NULL DEFAULT 0");
 }
 
 async function sessionToken(env,userId){
@@ -21,7 +23,7 @@ async function sessionToken(env,userId){
 async function authByToken(token,env){
   if(!token)return null;
   const sessionId=await hash(token);
-  const row=await env.DB.prepare(`SELECT s.id AS session_id,s.user_id,s.expires_at,u.id,u.name,u.phone,u.avatar,u.password_hash,u.created_at,u.updated_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=?`).bind(sessionId).first();
+  const row=await env.DB.prepare(`SELECT s.id AS session_id,s.user_id,s.expires_at,u.id,u.name,u.phone,u.avatar,u.last_seen,u.password_hash,u.created_at,u.updated_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=?`).bind(sessionId).first();
   if(!row||Date.now()>=row.expires_at){if(row)await env.DB.prepare('DELETE FROM sessions WHERE id=?').bind(row.session_id).run();return null;}
   return {sessionId:row.session_id,user:row};
 }
@@ -46,22 +48,31 @@ export default{async fetch(request,env){
       const id=crypto.randomUUID(),now=Date.now();
       await env.DB.prepare('INSERT INTO users(id,phone,name,password_hash,avatar,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').bind(id,phone,name,await hash(password),'',now,now).run();
       const token=await sessionToken(env,id);
-      return json({token,user:{id,name,phone,avatar:'',createdAt:now}},201);
+      await env.DB.prepare('UPDATE users SET last_seen=? WHERE id=?').bind(now,id).run();
+      return json({token,user:{id,name,phone,avatar:'',createdAt:now,lastSeen:now}},201);
     }
 
     if(url.pathname==='/api/auth/login'&&request.method==='POST'){
       const b=await request.json();const phone=normalizePhone(b.phone),password=b.password||'';
-      const u=await env.DB.prepare('SELECT id,name,phone,avatar,password_hash,created_at,updated_at FROM users WHERE phone=?').bind(phone).first();
+      const u=await env.DB.prepare('SELECT id,name,phone,avatar,last_seen,password_hash,created_at,updated_at FROM users WHERE phone=?').bind(phone).first();
       if(!u||u.password_hash!==await hash(password))return json({error:'Incorrect phone number or password.'},401);
-      const token=await sessionToken(env,u.id);
+      const token=await sessionToken(env,u.id);const now=Date.now();
+      await env.DB.prepare('UPDATE users SET last_seen=? WHERE id=?').bind(now,u.id).run();
+      u.last_seen=now;
       return json({token,user:publicUser(u)});
     }
 
     if(url.pathname==='/api/auth/logout'&&request.method==='POST'){
-      const a=await auth(request,env);if(a)await env.DB.prepare('DELETE FROM sessions WHERE id=?').bind(a.sessionId).run();return json({ok:true});
+      const a=await auth(request,env);if(a){await env.DB.prepare('UPDATE users SET last_seen=0 WHERE id=?').bind(a.user.id).run();await env.DB.prepare('DELETE FROM sessions WHERE id=?').bind(a.sessionId).run();}return json({ok:true});
     }
 
     const a=await auth(request,env);if(!a)return json({error:'Authentication required.'},401);
+
+    if(url.pathname==='/api/presence'&&request.method==='POST'){
+      const now=Date.now();
+      await env.DB.prepare('UPDATE users SET last_seen=?,updated_at=? WHERE id=?').bind(now,now,a.user.id).run();
+      return json({ok:true,lastSeen:now});
+    }
 
     if(url.pathname==='/api/me'&&request.method==='GET')return json({user:publicUser(a.user)});
 
@@ -70,13 +81,13 @@ export default{async fetch(request,env){
       if(name&&name.length<2)return json({error:'Name is too short.'},400);
       if(avatar.length>1500000)return json({error:'Profile photo is too large.'},400);
       await env.DB.prepare('UPDATE users SET name=COALESCE(?,name),avatar=?,updated_at=? WHERE id=?').bind(name||null,avatar,Date.now(),a.user.id).run();
-      const u=await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM users WHERE id=?').bind(a.user.id).first();
+      const u=await env.DB.prepare('SELECT id,name,phone,avatar,last_seen,created_at FROM users WHERE id=?').bind(a.user.id).first();
       return json({user:u?publicUser(u):null});
     }
 
     if(url.pathname==='/api/users'&&request.method==='GET'){
       const q=url.searchParams.get('q')?.trim().toLowerCase()||'';
-      const rows=q?await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM users WHERE id<>? AND (lower(name) LIKE ? OR phone LIKE ?) ORDER BY name LIMIT 100').bind(a.user.id,`%${q}%`,`%${q}%`).all():await env.DB.prepare('SELECT id,name,phone,avatar,created_at FROM users WHERE id<>? ORDER BY name LIMIT 100').bind(a.user.id).all();
+      const rows=q?await env.DB.prepare('SELECT id,name,phone,avatar,last_seen,created_at FROM users WHERE id<>? AND (lower(name) LIKE ? OR phone LIKE ?) ORDER BY name LIMIT 100').bind(a.user.id,`%${q}%`,`%${q}%`).all():await env.DB.prepare('SELECT id,name,phone,avatar,last_seen,created_at FROM users WHERE id<>? ORDER BY name LIMIT 100').bind(a.user.id).all();
       return json({users:rows.results.map(publicUser)});
     }
 
