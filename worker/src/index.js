@@ -15,17 +15,27 @@ export default{async fetch(request,env){if(request.method==="OPTIONS")return jso
 if(url.pathname==="/api/health")return json({ok:true,service:"zuno-api"});
 if(url.pathname==="/api/auth/register"&&request.method==="POST"){
 const b=await request.json();const name=b.name?.trim()||"",phone=normalizePhone(b.phone),password=b.password||"",username=typeof b.username==="string"?b.username.trim():"",about=typeof b.about==="string"?b.about.trim():"";
-if(!name||!/^\+254[17]\d{8}$/.test(phone)||password.length<6)return json({error:"Enter your full name, valid Kenyan phone number and a 6+ character password."},400);
-if(username&&!validUsername(username))return json({error:"Username must be 3-24 characters using letters, numbers or underscores."},400);
-if(about.length>160)return json({error:"About must be 160 characters or fewer."},400);
-if(await env.DB.prepare("SELECT id FROM users WHERE phone=?").bind(phone).first())return json({error:"An account with that phone number already exists."},409);
-if(username&&await env.DB.prepare("SELECT id FROM users WHERE lower(username)=lower(?)").bind(username).first())return json({error:"That username is already taken."},409);
+if(!name||!/^\+254[17]\d{8}$/.test(phone)||password.length<6)return json({error:"Enter your full name, valid Kenyan phone number and a 6+ character password."},400);if(username&&!validUsername(username))return json({error:"Username must be 3-24 characters using letters, numbers or underscores."},400);if(about.length>160)return json({error:"About must be 160 characters or fewer."},400);if(await env.DB.prepare("SELECT id FROM users WHERE phone=?").bind(phone).first())return json({error:"An account with that phone number already exists."},409);if(username&&await env.DB.prepare("SELECT id FROM users WHERE lower(username)=lower(?)").bind(username).first())return json({error:"That username is already taken."},409);
 const id=crypto.randomUUID(),now=Date.now();await env.DB.prepare("INSERT INTO users(id,phone,name,password_hash,avatar,username,about,last_seen,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(id,phone,name,await hash(password),"",username||null,about,now,now,now).run();const token=await sessionToken(env,id);return json({token,user:{id,name,phone,avatar:"",username,about,createdAt:now,lastSeen:now}},201);}
 if(url.pathname==="/api/auth/login"&&request.method==="POST"){
 const b=await request.json();const phone=normalizePhone(b.phone),password=b.password||"";const u=await env.DB.prepare("SELECT id,name,phone,avatar,username,about,last_seen,password_hash,created_at,updated_at FROM users WHERE phone=?").bind(phone).first();if(!u||u.password_hash!==await hash(password))return json({error:"Incorrect phone number or password."},401);const token=await sessionToken(env,u.id);const now=Date.now();await env.DB.prepare("UPDATE users SET last_seen=? WHERE id=?").bind(now,u.id).run();u.last_seen=now;return json({token,user:publicUser(u)});}
 if(url.pathname==="/api/auth/logout"&&request.method==="POST"){const a=await auth(request,env);if(a){await env.DB.prepare("UPDATE users SET last_seen=0 WHERE id=?").bind(a.user.id).run();await env.DB.prepare("DELETE FROM sessions WHERE id=?").bind(a.sessionId).run();}return json({ok:true});}
 const a=await auth(request,env);if(!a)return json({error:"Authentication required."},401);
 if(url.pathname==="/api/presence"&&request.method==="POST"){const now=Date.now();await env.DB.prepare("UPDATE users SET last_seen=?,updated_at=? WHERE id=?").bind(now,now,a.user.id).run();return json({ok:true,lastSeen:now});}
+if(url.pathname==="/api/call-signal"&&request.method==="POST"){
+ const b=await request.json();const recipientId=String(b.recipientId||"");const signal=b.signal;
+ if(!recipientId||!signal)return json({error:"recipientId and signal are required."},400);
+ const recipient=await env.DB.prepare("SELECT id FROM users WHERE id=?").bind(recipientId).first();
+ if(!recipient)return json({error:"User not found."},404);
+ const payload=JSON.stringify({fromUserId:a.user.id,signal});
+ const room=env.CHAT_ROOM.idFromName(`call:${recipientId}`);
+ await env.CHAT_ROOM.get(room).fetch("https://zuno.internal/call-signal",{method:"POST",body:payload});
+ return json({ok:true});
+}
+if(url.pathname==="/call-ws"&&request.headers.get("Upgrade")?.toLowerCase()==="websocket"){
+ const token=url.searchParams.get("token")||"";const aa=await authByToken(token,env);if(!aa)return json({error:"Authentication required."},401);
+ const room=env.CHAT_ROOM.idFromName(`call:${aa.user.id}`);return env.CHAT_ROOM.get(room).fetch(request);
+}
 if(url.pathname==="/api/me"&&request.method==="GET")return json({user:publicUser(a.user)});
 if(url.pathname==="/api/me"&&request.method==="PATCH"){
 const b=await request.json();const name=typeof b.name==="string"?b.name.trim():undefined;const avatar=typeof b.avatar==="string"?b.avatar:"";const username=typeof b.username==="string"?b.username.trim():undefined;const about=typeof b.about==="string"?b.about.trim():undefined;
