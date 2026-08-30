@@ -41,24 +41,25 @@ function CallOverlay({call,onAccept,onDecline,onHangup,onToggleMute,onToggleVide
 function App(){
  const session=getSession();
  const [me,setMe]=useState(session?.user||null),[people,setPeople]=useState([]),[active,setActive]=useState(null),[viewingProfile,setViewingProfile]=useState(null),[messages,setMessages]=useState([]),[text,setText]=useState(''),[search,setSearch]=useState(''),[profileOpen,setProfileOpen]=useState(false),[mobile,setMobile]=useState(false),[error,setError]=useState(''),[networkOnline,setNetworkOnline]=useState(()=>navigator.onLine),[unread,setUnread]=useState(()=>loadReadState()),[call,setCall]=useState(null);
- const callWsRef=useRef(null),pcRef=useRef(null),localStreamRef=useRef(null),pendingCandidatesRef=useRef([]),localVideoRef=useRef(null),remoteVideoRef=useRef(null);
+ const callWsRef=useRef(null),pcRef=useRef(null),localStreamRef=useRef(null),pendingCandidatesRef=useRef([]),localVideoRef=useRef(null),remoteVideoRef=useRef(null),callRef=useRef(null),peopleRef=useRef([]);
+ useEffect(()=>{callRef.current=call;peopleRef.current=people},[call,people]);
  const refreshPeople=async()=>{try{const list=await api.users();setPeople(list);if(active){const fresh=list.find(p=>p.id===active.id);if(fresh)setActive(fresh)}if(viewingProfile){const fresh=list.find(p=>p.id===viewingProfile.id);if(fresh)setViewingProfile(fresh)}}catch(e){setError(e.message)}};
  useEffect(()=>{if(!me)return;const goOnline=()=>setNetworkOnline(true),goOffline=()=>setNetworkOnline(false);window.addEventListener('online',goOnline);window.addEventListener('offline',goOffline);api.presence().catch(()=>{});refreshPeople();const heartbeat=setInterval(()=>{if(navigator.onLine){api.presence().catch(()=>{});refreshPeople()}},5000);return()=>{clearInterval(heartbeat);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline)}},[me]);
  useEffect(()=>{if(!me)return;const cleanup=api.connectCalls({onSignal:handleCallSignal});callWsRef.current={};return cleanup},[me]);
  useEffect(()=>{if(!me||!active)return;let alive=true;const load=async()=>{try{const rows=await api.messages(active.id);if(alive){setMessages(rows);const latest=rows.filter(m=>m.sender_id===active.id).reduce((v,m)=>Math.max(v,Number(m.created_at)||0),0);if(latest){const state=loadReadState();state[active.id]=latest;delete state[`count:${active.id}`];saveReadState(state);setUnread(state)}}}catch(e){if(alive)setError(e.message)}};load();const id=setInterval(load,2000);return()=>{alive=false;clearInterval(id)}},[me,active]);
  useEffect(()=>{if(!me||people.length===0)return;let cancelled=false;const checkUnread=async()=>{const state=loadReadState();let changed=false;const currentId=active?.id||'';for(const p of people){if(cancelled||p.id===currentId)continue;try{const rows=await api.messages(p.id);const readAt=Number(state[p.id]||0);const count=rows.filter(m=>m.sender_id===p.id&&Number(m.created_at)>readAt).length;const key=`count:${p.id}`;if(count>0){if(Number(state[key]||0)!==count){state[key]=count;changed=true}}else if(state[key]){delete state[key];changed=true}}catch{}}if(!cancelled&&changed){saveReadState(state);setUnread({...state})}};checkUnread();const timer=setInterval(checkUnread,5000);return()=>{cancelled=true;clearInterval(timer)}},[me,people,active?.id]);
- useEffect(()=>{if(!call)return;const timer=setTimeout(()=>{if(call.status==='calling')endCall(false)},30000);return()=>clearTimeout(timer)},[call]);
+ useEffect(()=>{if(!call)return;const timer=setTimeout(()=>{if(callRef.current?.status==='calling')endCall(false)},30000);return()=>clearTimeout(timer)},[call]);
  const filtered=useMemo(()=>people.filter(p=>p.name?.toLowerCase().includes(search.toLowerCase())||p.phone?.includes(search)||p.username?.toLowerCase().includes(search.toLowerCase())),[people,search]);
  const shownOnline=user=>user?.id===me?.id?networkOnline:isOnline(user);
  async function openChat(p){setActive(p);setViewingProfile(null);setMobile(false);const state=loadReadState();state[p.id]=Date.now();delete state[`count:${p.id}`];saveReadState(state);setUnread(state);try{setMessages(await api.messages(p.id))}catch(e){setError(e.message)}}
  async function send(){const body=text.trim();if(!body||!active)return;try{const m=await api.sendMessage(active.id,body);setMessages(v=>v.some(x=>x.id===m.id)?v:[...v,m]);const state=loadReadState();state[active.id]=Number(m.createdAt)||Date.now();delete state[`count:${active.id}`];saveReadState(state);setUnread(state);setText('')}catch(e){setError(e.message)}}
  async function signOut(){try{await api.logout()}catch{}clearSession();setMe(null);setActive(null);setMessages([])}
  async function createPeer(kind,otherUserId,isCaller,offer){
-   const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+   const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.google.com:19302'}]});
    pcRef.current=pc;
    pc.onicecandidate=e=>{if(e.candidate)api.sendCallSignal(otherUserId,{type:'ice-candidate',candidate:e.candidate});};
    pc.ontrack=e=>{if(remoteVideoRef.current)remoteVideoRef.current.srcObject=e.streams[0];};
-   pc.onconnectionstatechange=()=>{if(['failed','disconnected','closed'].includes(pc.connectionState)&&call)endCall(true);};
+   pc.onconnectionstatechange=()=>{if(['failed','disconnected','closed'].includes(pc.connectionState)){const c=callRef.current;if(c?.user?.id===otherUserId){cleanupCall();setCall(null);}}};
    const constraints=kind==='video'?{audio:true,video:true}:{audio:true,video:false};
    const stream=await navigator.mediaDevices.getUserMedia(constraints);
    localStreamRef.current=stream;
@@ -68,16 +69,47 @@ function App(){
    else if(offer){await pc.setRemoteDescription(new RTCSessionDescription(offer));for(const c of pendingCandidatesRef.current)await pc.addIceCandidate(c).catch(()=>{});pendingCandidatesRef.current=[];const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await api.sendCallSignal(otherUserId,{type:'answer',answer});}
    return pc;
  }
- async function startCall(kind){if(!active||call)return;try{await createPeer(kind,active.id,true);setCall({status:'calling',kind,user:active,muted:false,videoOff:false})}catch(e){setError(e.name==='NotAllowedError'?'Microphone/camera permission was denied.':e.message||'Unable to start call');pcRef.current?.close();pcRef.current=null}}
- async function handleCallSignal(data){const from=people.find(p=>p.id===data.fromUserId)||{id:data.fromUserId,name:'ZUNO user'};const s=data.signal||{};if(s.type==='offer'){if(call)return;setCall({status:'incoming',kind:s.kind||'audio',user:from,fromUserId:data.fromUserId,offer:s.offer,muted:false,videoOff:false});return}
-   if(!call||call.user?.id!==data.fromUserId)return;
-   if(s.type==='answer'&&pcRef.current){await pcRef.current.setRemoteDescription(new RTCSessionDescription(s.answer));for(const c of pendingCandidatesRef.current)await pcRef.current.addIceCandidate(c).catch(()=>{});pendingCandidatesRef.current=[];setCall(c=>({...c,status:'connected'}));}
-   if(s.type==='ice-candidate'&&pcRef.current){if(pcRef.current.remoteDescription)await pcRef.current.addIceCandidate(s.candidate).catch(()=>{});else pendingCandidatesRef.current.push(s.candidate);}
-   if(s.type==='hangup'){cleanupCall();setCall(null);}
+ async function startCall(kind){
+   if(!active||call)return;
+   const target=active;
+   setCall({status:'calling',kind,user:target,muted:false,videoOff:false});
+   try{
+     await createPeer(kind,target.id,true);
+   }catch(e){
+     setError(e.name==='NotAllowedError'?'Microphone/camera permission was denied.':e.message||'Unable to start call');
+     cleanupCall();
+     setCall(null);
+   }
+ }
+ async function handleCallSignal(data){
+   const from=peopleRef.current.find(p=>p.id===data.fromUserId)||{id:data.fromUserId,name:'ZUNO user'};
+   const s=data.signal||{};
+   const currentCall=callRef.current;
+   if(s.type==='offer'){
+     if(currentCall)return;
+     setCall({status:'incoming',kind:s.kind||'audio',user:from,fromUserId:data.fromUserId,offer:s.offer,muted:false,videoOff:false});
+     return;
+   }
+   if(s.type==='answer'&&pcRef.current&&currentCall?.user?.id===data.fromUserId){
+     await pcRef.current.setRemoteDescription(new RTCSessionDescription(s.answer));
+     for(const c of pendingCandidatesRef.current)await pcRef.current.addIceCandidate(c).catch(()=>{});
+     pendingCandidatesRef.current=[];
+     setCall(c=>({...c,status:'connected'}));
+     return;
+   }
+   if(s.type==='ice-candidate'&&pcRef.current&&currentCall?.user?.id===data.fromUserId){
+     if(pcRef.current.remoteDescription)await pcRef.current.addIceCandidate(s.candidate).catch(()=>{});
+     else pendingCandidatesRef.current.push(s.candidate);
+     return;
+   }
+   if(s.type==='hangup'&&currentCall?.user?.id===data.fromUserId){
+     cleanupCall();
+     setCall(null);
+   }
  }
  async function acceptCall(){if(!call?.fromUserId||call.status!=='incoming')return;try{await createPeer(call.kind,call.fromUserId,false,call.offer);setCall(c=>({...c,status:'connected'}));}catch(e){setError(e.name==='NotAllowedError'?'Microphone/camera permission was denied.':e.message||'Unable to accept call');await api.sendCallSignal(call.fromUserId,{type:'hangup'});cleanupCall();setCall(null)}}
  async function declineCall(){if(call?.fromUserId)await api.sendCallSignal(call.fromUserId,{type:'hangup'});cleanupCall();setCall(null)}
- async function endCall(notify=true){if(!call)return;if(notify&&call.user?.id)await api.sendCallSignal(call.user.id,{type:'hangup'});cleanupCall();setCall(null)}
+ async function endCall(notify=true){const currentCall=callRef.current;if(!currentCall)return;if(notify&&currentCall.user?.id)await api.sendCallSignal(currentCall.user.id,{type:'hangup'});cleanupCall();setCall(null)}
  function cleanupCall(){localStreamRef.current?.getTracks().forEach(t=>t.stop());localStreamRef.current=null;pcRef.current?.close();pcRef.current=null;pendingCandidatesRef.current=[];if(localVideoRef.current)localVideoRef.current.srcObject=null;if(remoteVideoRef.current)remoteVideoRef.current.srcObject=null}
  function toggleMute(){const track=localStreamRef.current?.getAudioTracks?.()[0];if(!track)return;track.enabled=!track.enabled;setCall(c=>({...c,muted:!track.enabled}))}
  function toggleVideo(){const track=localStreamRef.current?.getVideoTracks?.()[0];if(!track)return;track.enabled=!track.enabled;setCall(c=>({...c,videoOff:!track.enabled}))}
