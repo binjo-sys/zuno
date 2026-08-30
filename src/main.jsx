@@ -38,14 +38,28 @@ function CallOverlay({call,onAccept,onDecline,onHangup,onToggleMute,onToggleVide
  </div></div>
 }
 
+function waitForIceGathering(pc){
+  if(pc.iceGatheringState==='complete')return Promise.resolve();
+  return new Promise(resolve=>{
+    const done=()=>{
+      if(pc.iceGatheringState==='complete'){
+        pc.removeEventListener('icegatheringstatechange',done);
+        resolve();
+      }
+    };
+    pc.addEventListener('icegatheringstatechange',done);
+    setTimeout(()=>{pc.removeEventListener('icegatheringstatechange',done);resolve()},5000);
+  });
+}
+
 function App(){
  const session=getSession();
  const [me,setMe]=useState(session?.user||null),[people,setPeople]=useState([]),[active,setActive]=useState(null),[viewingProfile,setViewingProfile]=useState(null),[messages,setMessages]=useState([]),[text,setText]=useState(''),[search,setSearch]=useState(''),[profileOpen,setProfileOpen]=useState(false),[mobile,setMobile]=useState(false),[error,setError]=useState(''),[networkOnline,setNetworkOnline]=useState(()=>navigator.onLine),[unread,setUnread]=useState(()=>loadReadState()),[call,setCall]=useState(null);
- const callWsRef=useRef(null),pcRef=useRef(null),localStreamRef=useRef(null),pendingCandidatesRef=useRef([]),localVideoRef=useRef(null),remoteVideoRef=useRef(null),callRef=useRef(null),peopleRef=useRef([]);
+ const pcRef=useRef(null),localStreamRef=useRef(null),localVideoRef=useRef(null),remoteVideoRef=useRef(null),callRef=useRef(null),peopleRef=useRef([]),callWsCleanupRef=useRef(null);
  useEffect(()=>{callRef.current=call;peopleRef.current=people},[call,people]);
  const refreshPeople=async()=>{try{const list=await api.users();setPeople(list);if(active){const fresh=list.find(p=>p.id===active.id);if(fresh)setActive(fresh)}if(viewingProfile){const fresh=list.find(p=>p.id===viewingProfile.id);if(fresh)setViewingProfile(fresh)}}catch(e){setError(e.message)}};
  useEffect(()=>{if(!me)return;const goOnline=()=>setNetworkOnline(true),goOffline=()=>setNetworkOnline(false);window.addEventListener('online',goOnline);window.addEventListener('offline',goOffline);api.presence().catch(()=>{});refreshPeople();const heartbeat=setInterval(()=>{if(navigator.onLine){api.presence().catch(()=>{});refreshPeople()}},5000);return()=>{clearInterval(heartbeat);window.removeEventListener('online',goOnline);window.removeEventListener('offline',goOffline)}},[me]);
- useEffect(()=>{if(!me)return;const cleanup=api.connectCalls({onSignal:handleCallSignal});callWsRef.current={};return cleanup},[me]);
+ useEffect(()=>{if(!me)return;callWsCleanupRef.current=api.connectCalls({onSignal:handleCallSignal});return()=>{callWsCleanupRef.current?.();callWsCleanupRef.current=null}},[me]);
  useEffect(()=>{if(!me||!active)return;let alive=true;const load=async()=>{try{const rows=await api.messages(active.id);if(alive){setMessages(rows);const latest=rows.filter(m=>m.sender_id===active.id).reduce((v,m)=>Math.max(v,Number(m.created_at)||0),0);if(latest){const state=loadReadState();state[active.id]=latest;delete state[`count:${active.id}`];saveReadState(state);setUnread(state)}}}catch(e){if(alive)setError(e.message)}};load();const id=setInterval(load,2000);return()=>{alive=false;clearInterval(id)}},[me,active]);
  useEffect(()=>{if(!me||people.length===0)return;let cancelled=false;const checkUnread=async()=>{const state=loadReadState();let changed=false;const currentId=active?.id||'';for(const p of people){if(cancelled||p.id===currentId)continue;try{const rows=await api.messages(p.id);const readAt=Number(state[p.id]||0);const count=rows.filter(m=>m.sender_id===p.id&&Number(m.created_at)>readAt).length;const key=`count:${p.id}`;if(count>0){if(Number(state[key]||0)!==count){state[key]=count;changed=true}}else if(state[key]){delete state[key];changed=true}}catch{}}if(!cancelled&&changed){saveReadState(state);setUnread({...state})}};checkUnread();const timer=setInterval(checkUnread,5000);return()=>{cancelled=true;clearInterval(timer)}},[me,people,active?.id]);
  useEffect(()=>{if(!call)return;const timer=setTimeout(()=>{if(callRef.current?.status==='calling')endCall(false)},30000);return()=>clearTimeout(timer)},[call]);
@@ -55,32 +69,30 @@ function App(){
  async function send(){const body=text.trim();if(!body||!active)return;try{const m=await api.sendMessage(active.id,body);setMessages(v=>v.some(x=>x.id===m.id)?v:[...v,m]);const state=loadReadState();state[active.id]=Number(m.createdAt)||Date.now();delete state[`count:${active.id}`];saveReadState(state);setUnread(state);setText('')}catch(e){setError(e.message)}}
  async function signOut(){try{await api.logout()}catch{}clearSession();setMe(null);setActive(null);setMessages([])}
  async function createPeer(kind,otherUserId,isCaller,offer){
-   const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.google.com:19302'}]});
+   const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
    pcRef.current=pc;
-   pc.onicecandidate=e=>{if(e.candidate)api.sendCallSignal(otherUserId,{type:'ice-candidate',candidate:e.candidate});};
+   pc.onicecandidate=()=>{};
    pc.ontrack=e=>{if(remoteVideoRef.current)remoteVideoRef.current.srcObject=e.streams[0];};
-   pc.onconnectionstatechange=()=>{if(['failed','disconnected','closed'].includes(pc.connectionState)){const c=callRef.current;if(c?.user?.id===otherUserId){cleanupCall();setCall(null);}}};
-   const constraints=kind==='video'?{audio:true,video:true}:{audio:true,video:false};
-   const stream=await navigator.mediaDevices.getUserMedia(constraints);
+   pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc.connectionState)){const c=callRef.current;if(c?.user?.id===otherUserId){cleanupCall();setCall(null)}}};
+   const stream=await navigator.mediaDevices.getUserMedia(kind==='video'?{audio:true,video:true}:{audio:true,video:false});
    localStreamRef.current=stream;
    if(localVideoRef.current)localVideoRef.current.srcObject=stream;
    stream.getTracks().forEach(track=>pc.addTrack(track,stream));
-   if(isCaller){const created=await pc.createOffer();await pc.setLocalDescription(created);await api.sendCallSignal(otherUserId,{type:'offer',kind,offer:created});}
-   else if(offer){await pc.setRemoteDescription(new RTCSessionDescription(offer));for(const c of pendingCandidatesRef.current)await pc.addIceCandidate(c).catch(()=>{});pendingCandidatesRef.current=[];const answer=await pc.createAnswer();await pc.setLocalDescription(answer);await api.sendCallSignal(otherUserId,{type:'answer',answer});}
+   if(isCaller){
+     const created=await pc.createOffer();
+     await pc.setLocalDescription(created);
+     await waitForIceGathering(pc);
+     await api.sendCallSignal(otherUserId,{type:'offer',kind,offer:pc.localDescription});
+   }else if(offer){
+     await pc.setRemoteDescription(new RTCSessionDescription(offer));
+     const answer=await pc.createAnswer();
+     await pc.setLocalDescription(answer);
+     await waitForIceGathering(pc);
+     await api.sendCallSignal(otherUserId,{type:'answer',answer:pc.localDescription});
+   }
    return pc;
  }
- async function startCall(kind){
-   if(!active||call)return;
-   const target=active;
-   setCall({status:'calling',kind,user:target,muted:false,videoOff:false});
-   try{
-     await createPeer(kind,target.id,true);
-   }catch(e){
-     setError(e.name==='NotAllowedError'?'Microphone/camera permission was denied.':e.message||'Unable to start call');
-     cleanupCall();
-     setCall(null);
-   }
- }
+ async function startCall(kind){if(!active||call)return;const target=active;setCall({status:'calling',kind,user:target,muted:false,videoOff:false});try{await createPeer(kind,target.id,true)}catch(e){setError(e.name==='NotAllowedError'?'Microphone/camera permission was denied.':e.message||'Unable to start call');cleanupCall();setCall(null)}}
  async function handleCallSignal(data){
    const from=peopleRef.current.find(p=>p.id===data.fromUserId)||{id:data.fromUserId,name:'ZUNO user'};
    const s=data.signal||{};
@@ -92,27 +104,17 @@ function App(){
    }
    if(s.type==='answer'&&pcRef.current&&currentCall?.user?.id===data.fromUserId){
      await pcRef.current.setRemoteDescription(new RTCSessionDescription(s.answer));
-     for(const c of pendingCandidatesRef.current)await pcRef.current.addIceCandidate(c).catch(()=>{});
-     pendingCandidatesRef.current=[];
-     setCall(c=>({...c,status:'connected'}));
+     setCall(c=>c?({...c,status:'connected'}):c);
      return;
    }
-   if(s.type==='ice-candidate'&&pcRef.current&&currentCall?.user?.id===data.fromUserId){
-     if(pcRef.current.remoteDescription)await pcRef.current.addIceCandidate(s.candidate).catch(()=>{});
-     else pendingCandidatesRef.current.push(s.candidate);
-     return;
-   }
-   if(s.type==='hangup'&&currentCall?.user?.id===data.fromUserId){
-     cleanupCall();
-     setCall(null);
-   }
+   if(s.type==='hangup'&&currentCall?.user?.id===data.fromUserId){cleanupCall();setCall(null)}
  }
- async function acceptCall(){if(!call?.fromUserId||call.status!=='incoming')return;try{await createPeer(call.kind,call.fromUserId,false,call.offer);setCall(c=>({...c,status:'connected'}));}catch(e){setError(e.name==='NotAllowedError'?'Microphone/camera permission was denied.':e.message||'Unable to accept call');await api.sendCallSignal(call.fromUserId,{type:'hangup'});cleanupCall();setCall(null)}}
+ async function acceptCall(){if(!call?.fromUserId||call.status!=='incoming')return;try{await createPeer(call.kind,call.fromUserId,false,call.offer);setCall(c=>c?({...c,status:'connected'}):c)}catch(e){setError(e.name==='NotAllowedError'?'Microphone/camera permission was denied.':e.message||'Unable to accept call');await api.sendCallSignal(call.fromUserId,{type:'hangup'});cleanupCall();setCall(null)}}
  async function declineCall(){if(call?.fromUserId)await api.sendCallSignal(call.fromUserId,{type:'hangup'});cleanupCall();setCall(null)}
  async function endCall(notify=true){const currentCall=callRef.current;if(!currentCall)return;if(notify&&currentCall.user?.id)await api.sendCallSignal(currentCall.user.id,{type:'hangup'});cleanupCall();setCall(null)}
- function cleanupCall(){localStreamRef.current?.getTracks().forEach(t=>t.stop());localStreamRef.current=null;pcRef.current?.close();pcRef.current=null;pendingCandidatesRef.current=[];if(localVideoRef.current)localVideoRef.current.srcObject=null;if(remoteVideoRef.current)remoteVideoRef.current.srcObject=null}
- function toggleMute(){const track=localStreamRef.current?.getAudioTracks?.()[0];if(!track)return;track.enabled=!track.enabled;setCall(c=>({...c,muted:!track.enabled}))}
- function toggleVideo(){const track=localStreamRef.current?.getVideoTracks?.()[0];if(!track)return;track.enabled=!track.enabled;setCall(c=>({...c,videoOff:!track.enabled}))}
+ function cleanupCall(){localStreamRef.current?.getTracks().forEach(t=>t.stop());localStreamRef.current=null;pcRef.current?.close();pcRef.current=null;if(localVideoRef.current)localVideoRef.current.srcObject=null;if(remoteVideoRef.current)remoteVideoRef.current.srcObject=null}
+ function toggleMute(){const track=localStreamRef.current?.getAudioTracks?.()[0];if(!track)return;track.enabled=!track.enabled;setCall(c=>c?({...c,muted:!track.enabled}):c)}
+ function toggleVideo(){const track=localStreamRef.current?.getVideoTracks?.()[0];if(!track)return;track.enabled=!track.enabled;setCall(c=>c?({...c,videoOff:!track.enabled}):c)}
  if(!me)return <Auth onAuth={u=>{setMe(u);saveSession({...getSession(),user:u});api.presence().catch(()=>{});api.users().then(setPeople).catch(()=>{})}}/>;
  return <><div className="app"><aside className={`sidebar ${mobile?'mobile-open':''}`}><div className="brand"><div className="logo">Z</div><span>ZUNO</span><button className="close" onClick={()=>setMobile(false)}><X size={20}/></button></div><button className="profile" onClick={()=>setProfileOpen(true)}><Avatar user={me} showStatus/><div><b>{me.name}</b><small>{me.username?`@${me.username}`:me.phone}</small></div></button><div className="tabs"><button className="active"><MessageCircle size={18}/> Chats</button><button><Users size={18}/> Groups</button></div><div className="search"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search people"/></div><div className="chat-list">{filtered.map(p=><button className={`chat-row ${active?.id===p.id?'selected':''}`} key={p.id} onClick={()=>openChat(p)}><Avatar user={p} showStatus onClick={e=>{e.stopPropagation();setViewingProfile(p)}}/><div className="chat-info"><div><b>{p.name}</b>{Number(unread[`count:${p.id}`]||0)>0&&<span className="unread-badge">{Math.min(99,Number(unread[`count:${p.id}`]))}</span>}</div><p>{p.username?`@${p.username} · `:''}{shownOnline(p)?'Online':'Offline'}</p></div></button>)}{filtered.length===0&&<div className="empty-chat">No other ZUNO users yet.</div>}</div><button className="new-chat" onClick={()=>filtered[0]&&openChat(filtered[0])}><Plus size={18}/> New conversation</button><div className="side-bottom"><button onClick={()=>setProfileOpen(true)}><Settings size={19}/> Profile & settings</button><button onClick={signOut}><LogOut size={19}/> Sign out</button></div></aside><main className="chat">{active?<><header className="chat-head"><button className="hamb" onClick={()=>setMobile(true)}><Menu/></button><button className="profile-click profile-head-click" onClick={()=>setViewingProfile(active)}><Avatar user={active} showStatus/></button><div className="head-info"><b>{active.name}</b><span className={shownOnline(active)?'online':''}>{shownOnline(active)?'Online':'Offline'}</span></div><div className="call-buttons"><button title="Voice call" onClick={()=>startCall('audio')}><Phone size={18}/></button><button title="Video call" onClick={()=>startCall('video')}><Video size={18}/></button></div></header><section className="messages"><div className="day">TODAY</div>{messages.map(m=><div key={m.id} className={`bubble-wrap ${m.sender_id===me.id?'mine':''}`}><div className="bubble">{m.body}</div></div>)}{messages.length===0&&<div className="empty-chat">No messages yet. Say hello 👋</div>}</section><div className="composer"><input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()} placeholder="Write a message..."/><button className="send" onClick={send}><Send size={18}/></button></div></>:<div className="empty-state"><div className="logo">Z</div><h2>Welcome to ZUNO</h2><p>Select someone to start chatting.</p></div>}{error&&<div className="error toast">{error}<button onClick={()=>setError('')}><X size={14}/></button></div>}</main></div>{profileOpen&&<ProfileEditor me={me} onClose={()=>setProfileOpen(false)} onSaved={u=>{setMe(u);saveSession({...getSession(),user:u});refreshPeople()}}/>}{viewingProfile&&<ProfileViewer user={viewingProfile} onClose={()=>setViewingProfile(null)} onChat={()=>openChat(viewingProfile)}/>} {call&&<CallOverlay call={call} onAccept={acceptCall} onDecline={declineCall} onHangup={()=>endCall(true)} onToggleMute={toggleMute} onToggleVideo={toggleVideo} localVideoRef={localVideoRef} remoteVideoRef={remoteVideoRef}/>}</>
 }
