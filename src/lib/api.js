@@ -14,16 +14,31 @@ export const api={
  users:async(q='')=>{const r=await request(`/users${q?`?q=${encodeURIComponent(q)}`:''}`);return r.users||[]},
  messages:async(withUser)=>{const r=await request(`/messages?with=${encodeURIComponent(withUser)}`);return r.messages||[]},
  sendMessage:async(recipientId,body)=>{const r=await request('/messages',{method:'POST',body:JSON.stringify({recipientId,body})});return r.message},
- sendCallSignal:async(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})}),
+ sendCallSignal:async(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})),
  connectCalls:({onSignal,onOpen,onClose})=>{
-   const session=getSession();
-   if(!session?.token) return ()=>{};
-   const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');
-   const ws=new WebSocket(`${base}/call-ws?token=${encodeURIComponent(session.token)}`);
-   ws.onopen=()=>onOpen?.();
-   ws.onmessage=(event)=>{try{const data=JSON.parse(event.data);onSignal?.(data)}catch{}};
-   ws.onclose=()=>onClose?.();
-   return ()=>{try{ws.close()}catch{}};
+   let stopped=false;
+   let ws=null;
+   let retryTimer=null;
+   let retryDelay=1000;
+   const connect=()=>{
+     if(stopped)return;
+     const session=getSession();
+     if(!session?.token)return;
+     const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');
+     ws=new WebSocket(`${base}/call-ws?token=${encodeURIComponent(session.token)}`);
+     ws.onopen=()=>{retryDelay=1000;onOpen?.()};
+     ws.onmessage=(event)=>{try{const data=JSON.parse(event.data);onSignal?.(data)}catch{}};
+     ws.onerror=()=>{};
+     ws.onclose=()=>{
+       onClose?.();
+       if(!stopped){
+         retryTimer=setTimeout(connect,retryDelay);
+         retryDelay=Math.min(retryDelay*2,15000);
+       }
+     };
+   };
+   connect();
+   return ()=>{stopped=true;if(retryTimer)clearTimeout(retryTimer);try{ws?.close()}catch{}};
  },
  connectChat:({otherUserId,onMessage,onOpen,onClose})=>{
    const session=getSession();
