@@ -12,7 +12,18 @@ export const api={
  updateMe:async(patch)=>{const r=await request('/me',{method:'PATCH',body:JSON.stringify(patch)});return r.user},
  users:async(q='')=>{const r=await request(`/users${q?`?q=${encodeURIComponent(q)}`:''}`);return r.users||[]},
  messages:async(withUser)=>{const r=await request(`/messages?with=${encodeURIComponent(withUser)}`);return r.messages||[]},
- sendMessage:async(recipientId,body)=>{const r=await request('/messages',{method:'POST',body:JSON.stringify({recipientId,body})});return r.message}
+ sendMessage:async(recipientId,body)=>{const r=await request('/messages',{method:'POST',body:JSON.stringify({recipientId,body})});return r.message},
+ connectChat:({otherUserId,onMessage,onOpen,onClose})=>{
+   const session=getSession();
+   if(!session?.token) return ()=>{};
+   const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');
+   const url=`${base}/ws?b=${encodeURIComponent(otherUserId)}&token=${encodeURIComponent(session.token)}`;
+   const ws=new WebSocket(url);
+   ws.onopen=()=>onOpen?.();
+   ws.onmessage=(event)=>{try{const data=JSON.parse(event.data);onMessage?.(data)}catch{}};
+   ws.onclose=()=>onClose?.();
+   return ()=>{try{ws.close()}catch{}};
+ }
 };
 export const API_BASE_URL=API_BASE.replace(/\/api$/,'');
 export const mediaUrl=(value)=>value?.startsWith?.('data:')?value:'';
