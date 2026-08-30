@@ -9,7 +9,6 @@ const publicUser=u=>({id:u.id,name:u.name,phone:u.phone,avatar:u.avatar||'',crea
 async function ensureSchema(env){
   const cols=await env.DB.prepare('PRAGMA table_info(users)').all();
   if(!(cols.results||[]).some(c=>c.name==='avatar'))await env.DB.exec("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''");
-  await env.DB.exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at INTEGER NOT NULL);CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,sender_id TEXT NOT NULL,recipient_id TEXT NOT NULL,body TEXT NOT NULL,created_at INTEGER NOT NULL);CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);CREATE INDEX IF NOT EXISTS messages_pair_idx ON messages(sender_id,recipient_id,created_at);`);
 }
 
 async function sessionToken(env,userId){
@@ -37,8 +36,8 @@ export default{async fetch(request,env){
   if(request.method==='OPTIONS')return json(null);
   const url=new URL(request.url);
   try{
-    await ensureSchema(env);
     if(url.pathname==='/api/health')return json({ok:true,service:'zuno-api'});
+    await ensureSchema(env);
 
     if(url.pathname==='/api/auth/register'&&request.method==='POST'){
       const b=await request.json();const name=b.name?.trim()||'',phone=normalizePhone(b.phone),password=b.password||'';
