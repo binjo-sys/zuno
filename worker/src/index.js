@@ -6,13 +6,6 @@ const normalizePhone=(value='')=>{const raw=String(value).trim().replace(/[\s()-
 const hash=async(value)=>{const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('');};
 const publicUser=u=>({id:u.id,name:u.name,phone:u.phone,avatar:u.avatar||'',createdAt:u.created_at,lastSeen:u.last_seen||0});
 
-async function ensureSchema(env){
-  const cols=await env.DB.prepare('PRAGMA table_info(users)').all();
-  const names=(cols.results||[]).map(c=>c.name);
-  if(!names.includes('avatar'))await env.DB.exec("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''");
-  if(!names.includes('last_seen'))await env.DB.exec("ALTER TABLE users ADD COLUMN last_seen INTEGER NOT NULL DEFAULT 0");
-}
-
 async function sessionToken(env,userId){
   const token=crypto.randomUUID()+crypto.randomUUID();
   const sessionId=await hash(token);const createdAt=Date.now();const expiresAt=createdAt+30*24*60*60*1000;
@@ -39,16 +32,14 @@ export default{async fetch(request,env){
   const url=new URL(request.url);
   try{
     if(url.pathname==='/api/health')return json({ok:true,service:'zuno-api'});
-    await ensureSchema(env);
 
     if(url.pathname==='/api/auth/register'&&request.method==='POST'){
       const b=await request.json();const name=b.name?.trim()||'',phone=normalizePhone(b.phone),password=b.password||'';
       if(!name||!/^\+254[17]\d{8}$/.test(phone)||password.length<6)return json({error:'Enter your full name, valid Kenyan phone number and a 6+ character password.'},400);
       if(await env.DB.prepare('SELECT id FROM users WHERE phone=?').bind(phone).first())return json({error:'An account with that phone number already exists.'},409);
       const id=crypto.randomUUID(),now=Date.now();
-      await env.DB.prepare('INSERT INTO users(id,phone,name,password_hash,avatar,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').bind(id,phone,name,await hash(password),'',now,now).run();
+      await env.DB.prepare('INSERT INTO users(id,phone,name,password_hash,avatar,last_seen,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').bind(id,phone,name,await hash(password),'',now,now,now).run();
       const token=await sessionToken(env,id);
-      await env.DB.prepare('UPDATE users SET last_seen=? WHERE id=?').bind(now,id).run();
       return json({token,user:{id,name,phone,avatar:'',createdAt:now,lastSeen:now}},201);
     }
 
