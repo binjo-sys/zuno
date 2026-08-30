@@ -37,23 +37,20 @@ const publicUser = (u) => ({
 });
 
 async function ensureSchema(env) {
-  // The original ZUNO schema already uses users/sessions/messages.
-  // Repair only the missing avatar column when an older database lacks it.
-  const cols = await env.DB
-    .prepare("PRAGMA table_info(users)")
-    .all();
-
-  const hasAvatar = (cols.results || []).some((c) => c.name === "avatar");
+  const userCols = await env.DB.prepare("PRAGMA table_info(users)").all();
+  const hasAvatar = (userCols.results || []).some((c) => c.name === "avatar");
   if (!hasAvatar) {
     await env.DB.exec(
       "ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''"
     );
   }
 
+  // The live database's sessions table is: id, user_id, expires_at, created_at.
   await env.DB.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
-      token_hash TEXT PRIMARY KEY,
+      id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS messages (
@@ -71,12 +68,15 @@ async function ensureSchema(env) {
 
 async function sessionToken(env, userId) {
   const token = crypto.randomUUID() + crypto.randomUUID();
+  const sessionId = await hash(token);
+  const createdAt = Date.now();
+  const expiresAt = createdAt + 30 * 24 * 60 * 60 * 1000;
 
   await env.DB
     .prepare(
-      "INSERT INTO sessions(token_hash,user_id,created_at) VALUES(?,?,?)"
+      "INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)"
     )
-    .bind(await hash(token), userId, Date.now())
+    .bind(sessionId, userId, expiresAt, createdAt)
     .run();
 
   return token;
@@ -85,12 +85,13 @@ async function sessionToken(env, userId) {
 async function authByToken(token, env) {
   if (!token) return null;
 
+  const sessionId = await hash(token);
   const row = await env.DB
     .prepare(`
       SELECT
-        s.token_hash,
+        s.id AS session_id,
         s.user_id,
-        s.created_at AS session_created_at,
+        s.expires_at,
         u.id,
         u.name,
         u.phone,
@@ -100,26 +101,23 @@ async function authByToken(token, env) {
         u.updated_at
       FROM sessions s
       JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = ?
+      WHERE s.id = ?
     `)
-    .bind(await hash(token))
+    .bind(sessionId)
     .first();
 
-  if (
-    !row ||
-    Date.now() - row.session_created_at > 30 * 24 * 60 * 60 * 1000
-  ) {
+  if (!row || Date.now() >= row.expires_at) {
     if (row) {
       await env.DB
-        .prepare("DELETE FROM sessions WHERE token_hash = ?")
-        .bind(row.token_hash)
+        .prepare("DELETE FROM sessions WHERE id = ?")
+        .bind(row.session_id)
         .run();
     }
     return null;
   }
 
   return {
-    tokenHash: row.token_hash,
+    sessionId: row.session_id,
     user: row
   };
 }
@@ -231,8 +229,7 @@ export default {
           return json({ error: "Incorrect phone number or password." }, 401);
         }
 
-        const passwordHash = await hash(password);
-        if (user.password_hash !== passwordHash) {
+        if (user.password_hash !== (await hash(password))) {
           return json({ error: "Incorrect phone number or password." }, 401);
         }
 
@@ -251,8 +248,8 @@ export default {
         const current = await auth(request, env);
         if (current) {
           await env.DB
-            .prepare("DELETE FROM sessions WHERE token_hash = ?")
-            .bind(current.tokenHash)
+            .prepare("DELETE FROM sessions WHERE id = ?")
+            .bind(current.sessionId)
             .run();
         }
         return json({ ok: true });
@@ -300,7 +297,6 @@ export default {
 
       if (url.pathname === "/api/users" && request.method === "GET") {
         const q = url.searchParams.get("q")?.trim().toLowerCase() || "";
-
         const rows = q
           ? await env.DB
               .prepare(`
@@ -342,12 +338,7 @@ export default {
             ORDER BY created_at ASC
             LIMIT 500
           `)
-          .bind(
-            current.user.id,
-            withUser,
-            withUser,
-            current.user.id
-          )
+          .bind(current.user.id, withUser, withUser, current.user.id)
           .all();
 
         return json({ messages: rows.results });
@@ -396,8 +387,6 @@ export default {
           )
           .run();
 
-        // Persisting the message is the critical operation.
-        // Realtime delivery is handled by the client's polling layer.
         return json(
           {
             message: {
