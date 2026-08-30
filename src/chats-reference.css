@@ -1,0 +1,216 @@
+/* ZUNO Chats — reference-first visual layer. UI only; authentication/backend untouched. */
+:root{
+  --z-chat-bg:#0f1018;
+  --z-chat-surface:#181a25;
+  --z-chat-surface-2:#20222e;
+  --z-chat-line:rgba(255,255,255,.065);
+  --z-chat-text:#f6f6fa;
+  --z-chat-muted:#9296a8;
+  --z-chat-purple:#6c5ce7;
+  --z-chat-green:#00c48c;
+}
+
+/* Left/chat-list area */
+.sidebar{
+  width:380px!important;
+  background:#11121b!important;
+  border-right:1px solid var(--z-chat-line)!important;
+  padding-bottom:74px!important;
+}
+.brand{
+  height:92px!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  flex-direction:column!important;
+  gap:0!important;
+  padding:12px 56px 10px 20px!important;
+  position:relative!important;
+  background:#11121b!important;
+  border-bottom:1px solid var(--z-chat-line)!important;
+}
+.brand .logo,.brand>span{display:none!important}
+.brand::before{
+  content:'ZUNO'!important;
+  font-family:Poppins,sans-serif!important;
+  font-size:25px!important;
+  line-height:1!important;
+  font-weight:700!important;
+  letter-spacing:2.5px!important;
+  color:#fff!important;
+}
+.brand::after{
+  content:'by Binjo'!important;
+  position:static!important;
+  transform:none!important;
+  margin-top:7px!important;
+  font-family:Georgia,serif!important;
+  font-size:12px!important;
+  line-height:1!important;
+  font-style:italic!important;
+  font-weight:400!important;
+  letter-spacing:.25px!important;
+  color:#aaa0ff!important;
+}
+
+/* Account card is intentionally removed from the Chats header. Account details live in the three-dot menu. */
+.sidebar>.profile,.sidebar .profile{display:none!important}
+
+.tabs{
+  margin:16px 16px 12px!important;
+  padding:4px!important;
+  border-radius:13px!important;
+  background:#191b27!important;
+  border:1px solid var(--z-chat-line)!important;
+}
+.tabs button{
+  min-height:38px!important;
+  border-radius:10px!important;
+  color:#85899a!important;
+  font-size:12px!important;
+  font-weight:500!important;
+}
+.tabs button.active{
+  color:#fff!important;
+  background:#2b2d3b!important;
+  box-shadow:0 4px 12px rgba(0,0,0,.22)!important;
+}
+
+.search{
+  margin:0 16px 13px!important;
+  height:46px!important;
+  box-sizing:border-box!important;
+  padding:0 14px!important;
+  border-radius:14px!important;
+  background:#1b1d28!important;
+  border:1px solid var(--z-chat-line)!important;
+  color:#818596!important;
+}
+.search input{
+  color:#f7f7fa!important;
+  font-size:12px!important;
+}
+.search input::placeholder{color:#777c8e!important}
+
+.chat-list{padding:0 8px 12px!important}
+.chat-row{
+  min-height:72px!important;
+  padding:11px 12px!important;
+  margin:2px 0!important;
+  border-radius:15px!important;
+  background:transparent!important;
+  border:1px solid transparent!important;
+  color:var(--z-chat-text)!important;
+  transition:background .16s ease,transform .16s ease!important;
+}
+.chat-row:hover{background:#191b27!important}
+.chat-row.selected{
+  background:#202231!important;
+  border-color:rgba(108,92,231,.13)!important;
+}
+.chat-row .avatar{
+  width:50px!important;
+  height:50px!important;
+  flex:none!important;
+  background:#2a2c39!important;
+}
+.chat-info{min-width:0!important}
+.chat-info b{
+  color:#f7f7fa!important;
+  font-size:13px!important;
+  font-weight:600!important;
+}
+.chat-info p{
+  color:#898e9f!important;
+  font-size:11px!important;
+  margin-top:3px!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+.unread-badge{
+  min-width:20px!important;
+  height:20px!important;
+  padding:0 6px!important;
+  border-radius:999px!important;
+  display:grid!important;
+  place-items:center!important;
+  background:var(--z-chat-purple)!important;
+  color:#fff!important;
+  font-size:10px!important;
+  font-weight:700!important;
+}
+.status-dot.online{
+  background:var(--z-chat-green)!important;
+  box-shadow:0 0 0 3px #11121b,0 0 9px rgba(0,196,140,.35)!important;
+}
+.status-dot.offline{
+  background:#5f6474!important;
+  box-shadow:0 0 0 3px #11121b!important;
+}
+
+.new-chat{
+  width:calc(100% - 32px)!important;
+  margin:7px 16px 12px!important;
+  min-height:46px!important;
+  border-radius:14px!important;
+  background:linear-gradient(135deg,#6c5ce7,#5058df)!important;
+  box-shadow:0 10px 24px rgba(108,92,231,.22)!important;
+}
+.side-bottom{display:none!important}
+
+/* Three-dot account menu belongs to the Chats header area. */
+.zuno-top-menu{
+  top:20px!important;
+  left:320px!important;
+  right:auto!important;
+}
+.zuno-menu-trigger{
+  width:40px!important;
+  height:40px!important;
+  border-radius:12px!important;
+  background:#1e202c!important;
+  border:1px solid rgba(255,255,255,.07)!important;
+  color:#e8e8ee!important;
+}
+
+/* Main empty/chat region follows the same quiet reference composition. */
+.chat{
+  background:#0f1018!important;
+}
+.chat-head{
+  height:78px!important;
+  padding:0 22px!important;
+  background:#151722!important;
+  border-bottom:1px solid var(--z-chat-line)!important;
+}
+.messages{
+  background:
+    radial-gradient(circle at 50% 0%,rgba(108,92,231,.075),transparent 38%),
+    #0f1018!important;
+}
+
+.zuno-bottom-nav{
+  height:74px!important;
+  background:rgba(17,18,27,.97)!important;
+  border-top:1px solid var(--z-chat-line)!important;
+  backdrop-filter:blur(18px)!important;
+}
+.zuno-bottom-nav button{color:#777c8e!important}
+.zuno-bottom-nav button.active{
+  color:#fff!important;
+  background:rgba(108,92,231,.14)!important;
+}
+
+@media(max-width:900px){
+  .sidebar{width:100%!important}
+  .brand{height:82px!important;padding-right:52px!important}
+  .tabs{margin-top:13px!important}
+  .search{margin-bottom:10px!important}
+  .chat-row{min-height:68px!important}
+  .zuno-top-menu{top:18px!important;left:auto!important;right:12px!important}
+}
+
+@media(min-width:901px){
+  .zuno-top-menu{left:326px!important;right:auto!important}
+}
