@@ -1,6 +1,6 @@
-import { DurableObject } from 'cloudflare:workers';
+import { DurableObject } from "cloudflare:workers";
 
-const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'content-type, authorization','access-control-allow-methods':'GET,POST,PATCH,OPTIONS'}});
+const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json","access-control-allow-origin":"*","access-control-allow-headers":"content-type, authorization","access-control-allow-methods":"GET,POST,PATCH,OPTIONS"}});
 const normalizePhone=(value='')=>{const raw=value.trim().replace(/[\s()-]/g,'');if(/^\+254[17]\d{8}$/.test(raw))return raw;if(/^254[17]\d{8}$/.test(raw))return `+${raw}`;if(/^0[17]\d{8}$/.test(raw))return `+254${raw.slice(1)}`;return raw;};
 const hash=async(value)=>{const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');};
 const publicUser=(u)=>({id:u.id,name:u.name,phone:u.phone,avatar:u.avatar||'',createdAt:u.created_at});
@@ -29,3 +29,5 @@ if(url.pathname==='/api/messages'&&request.method==='POST'){const b=await reques
 if(url.pathname==='/ws'&&request.headers.get('Upgrade')?.toLowerCase()==='websocket'){const b=url.searchParams.get('b')||'',token=url.searchParams.get('token')||'';const aa=await authByToken(token,env);if(!aa)return json({error:'Authentication required.'},401);if(!b)return json({error:'b is required'},400);const room=env.CHAT_ROOM.idFromName([aa.user.id,b].sort().join(':'));return env.CHAT_ROOM.get(room).fetch(request);}
 return json({error:'Not found'},404);}catch(e){console.error(String(e));return json({error:'Server error'},500);}}};
 export class ChatRoom extends DurableObject{async fetch(request){if(request.method==='POST'){const message=await request.text();for(const ws of this.ctx.getWebSockets())if(ws.readyState===WebSocket.OPEN)ws.send(message);return new Response('ok');}const pair=new WebSocketPair();const [client,server]=Object.values(pair);this.ctx.acceptWebSocket(server);return new Response(null,{status:101,webSocket:client});}async webSocketMessage(){}async webSocketClose(ws,code,reason){try{ws.close(code,reason)}catch{}}}
+
+// Keep realtime chat deployment synchronized.
