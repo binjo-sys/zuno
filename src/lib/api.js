@@ -14,6 +14,17 @@ export const api={
  users:async(q='')=>{const r=await request(`/users${q?`?q=${encodeURIComponent(q)}`:''}`);return r.users||[]},
  messages:async(withUser)=>{const r=await request(`/messages?with=${encodeURIComponent(withUser)}`);return r.messages||[]},
  sendMessage:async(recipientId,body)=>{const r=await request('/messages',{method:'POST',body:JSON.stringify({recipientId,body})});return r.message},
+ sendCallSignal:async(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})}),
+ connectCalls:({onSignal,onOpen,onClose})=>{
+   const session=getSession();
+   if(!session?.token) return ()=>{};
+   const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');
+   const ws=new WebSocket(`${base}/call-ws?token=${encodeURIComponent(session.token)}`);
+   ws.onopen=()=>onOpen?.();
+   ws.onmessage=(event)=>{try{const data=JSON.parse(event.data);onSignal?.(data)}catch{}};
+   ws.onclose=()=>onClose?.();
+   return ()=>{try{ws.close()}catch{}};
+ },
  connectChat:({otherUserId,onMessage,onOpen,onClose})=>{
    const session=getSession();
    if(!session?.token) return ()=>{};
@@ -23,7 +34,7 @@ export const api={
    ws.onopen=()=>onOpen?.();
    ws.onmessage=(event)=>{try{const data=JSON.parse(event.data);onMessage?.(data)}catch{}};
    ws.onclose=()=>onClose?.();
-   return ()=>{try{ws.close()}catch{}};
+   return ()=>{try{ws.close()}catch{}}
  }
 };
 export const API_BASE_URL=API_BASE.replace(/\/api$/,'');
