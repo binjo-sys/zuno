@@ -1,16 +1,14 @@
-/* ZUNO account menu refinement — visual layer only. */
-.brand{position:relative;justify-content:center;gap:0;height:96px;padding:10px 58px 8px 18px;text-align:center;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(251,248,255,.92));border-bottom:1px solid rgba(116,103,217,.10)}
-.brand .logo{display:none}
-.brand{font-size:0;line-height:1}
+/* ZUNO account menu — final visual layer */
+.brand{position:relative!important;justify-content:center!important;gap:0!important;height:96px!important;padding:10px 58px 8px 18px!important;text-align:center!important;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(251,248,255,.92))!important;border-bottom:1px solid rgba(116,103,217,.10)!important}
+.brand .logo{display:none!important}
+.brand{font-size:0!important;line-height:1!important}
 .brand::before{content:"ZUNO";display:block;font-family:'Inter',ui-sans-serif,system-ui,sans-serif;font-size:27px;font-weight:800;letter-spacing:1.7px;color:#27213b}
 .brand::after{content:"by Binjo";position:absolute;left:50%;top:58px;transform:translateX(-50%);font-family:'Libre Baskerville',Georgia,serif;font-size:13px;font-style:italic;font-weight:400;letter-spacing:.2px;color:#7467d9;white-space:nowrap}
-.side-bottom{position:absolute;top:18px;right:12px;z-index:8;padding:0;border:0;background:transparent}
-.side-bottom button{width:38px;height:38px;padding:0;border-radius:12px;background:rgba(116,103,217,.08);color:#6256b8;justify-content:center;font-size:0;gap:0;border:1px solid rgba(116,103,217,.10);backdrop-filter:blur(10px)}
-.side-bottom button svg{display:none}
-.side-bottom button:first-child::before{content:"⋯";display:block;font-size:25px;line-height:31px;font-weight:700;letter-spacing:2px;transform:translateY(-3px)}
-.side-bottom button:first-child{position:relative}
-.side-bottom button:first-child::after{content:""}
-.side-bottom button+button{display:none}
-/* Give the existing Settings/Profile/Sign-out surfaces a consistent menu-ready appearance. */
-.brand + .profile{margin-top:12px}
-@media(max-width:760px){.brand{height:88px}.brand::before{font-size:24px}.brand::after{top:53px;font-size:12px}.side-bottom{top:14px;right:10px}.side-bottom button{width:36px;height:36px}}
+.side-bottom{display:none!important}
+.zuno-top-menu{position:fixed;top:18px;left:314px;z-index:9999;font-family:'Inter',ui-sans-serif,system-ui,sans-serif}
+.zuno-menu-trigger{width:40px;height:40px;border:1px solid rgba(116,103,217,.14);border-radius:13px;background:rgba(255,255,255,.86);color:#6256b8;box-shadow:0 8px 22px rgba(91,75,219,.10);font-size:27px;line-height:34px;font-weight:700;cursor:pointer;backdrop-filter:blur(10px);display:grid;place-items:center;padding:0}
+.zuno-menu-panel{display:none;position:absolute;top:48px;right:0;min-width:190px;padding:7px;background:rgba(255,255,255,.96);border:1px solid rgba(116,103,217,.13);border-radius:16px;box-shadow:0 20px 55px rgba(45,35,84,.16);backdrop-filter:blur(18px)}
+.zuno-menu-panel.open{display:grid}
+.zuno-menu-panel button{border:0;background:transparent;text-align:left;padding:11px 13px;border-radius:10px;color:#2d2940;font-size:14px;font-weight:600;cursor:pointer}
+.zuno-menu-panel button:hover{background:linear-gradient(135deg,rgba(165,143,232,.16),rgba(121,216,208,.13))}
+@media(max-width:760px){.brand{height:88px!important}.brand::before{font-size:24px}.brand::after{top:53px;font-size:12px}.zuno-top-menu{top:14px;right:10px;left:auto}.zuno-menu-trigger{width:36px;height:36px;font-size:25px}}
