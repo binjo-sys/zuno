@@ -1,0 +1,25 @@
+/* ZUNO reference-style navigation motion: subtle, fast, soft and premium. */
+@keyframes zunoNavIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes zunoNavItem{from{opacity:0;transform:translateY(5px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes zunoNavActive{0%{transform:scale(.92)}60%{transform:scale(1.06)}100%{transform:scale(1)}}
+@keyframes zunoPageFade{from{opacity:.55;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+/* Main bottom navigation — supports the common ZUNO nav wrappers without touching auth/call controls. */
+.bottom-nav,.bottom-navigation,.main-nav,.app-nav,.mobile-nav,.tab-bar{animation:zunoNavIn .28s cubic-bezier(.22,1,.36,1) both;will-change:transform,opacity}
+.bottom-nav button,.bottom-navigation button,.main-nav button,.app-nav button,.mobile-nav button,.tab-bar button{transition:transform .22s cubic-bezier(.22,1,.36,1),background-color .22s ease,color .22s ease,box-shadow .22s ease;will-change:transform}
+.bottom-nav button:hover,.bottom-navigation button:hover,.main-nav button:hover,.app-nav button:hover,.mobile-nav button:hover,.tab-bar button:hover{transform:translateY(-2px)}
+.bottom-nav button:active,.bottom-navigation button:active,.main-nav button:active,.app-nav button:active,.mobile-nav button:active,.tab-bar button:active{transform:scale(.94)}
+.bottom-nav button.active,.bottom-navigation button.active,.main-nav button.active,.app-nav button.active,.mobile-nav button.active,.tab-bar button.active,[aria-current="page"]{animation:zunoNavActive .3s cubic-bezier(.34,1.56,.64,1) both}
+
+/* Page-level movement for Chats, Calls, People and Settings when their content wrapper changes. */
+.chat,.calls,.people,.settings,.chats,.call-list,.people-list,.settings-list{animation:zunoPageFade .3s cubic-bezier(.22,1,.36,1) both}
+
+/* Reference-like row entrance and tactile feedback. */
+.chat-row,.person-row,.contact-row,.call-row,.settings-row{animation:zunoNavItem .24s cubic-bezier(.22,1,.36,1) both;transition:transform .2s ease,background-color .2s ease,box-shadow .2s ease}
+.chat-row:hover,.person-row:hover,.contact-row:hover,.call-row:hover,.settings-row:hover{transform:translateX(3px)}
+
+/* Smooth icon lift without changing the icon style. */
+.bottom-nav svg,.bottom-navigation svg,.main-nav svg,.app-nav svg,.mobile-nav svg,.tab-bar svg{transition:transform .22s cubic-bezier(.22,1,.36,1),stroke-width .22s ease}
+.bottom-nav button:hover svg,.bottom-navigation button:hover svg,.main-nav button:hover svg,.app-nav button:hover svg,.mobile-nav button:hover svg,.tab-bar button:hover svg{transform:translateY(-1px) scale(1.04)}
+
+@media(prefers-reduced-motion:reduce){.bottom-nav,.bottom-navigation,.main-nav,.app-nav,.mobile-nav,.tab-bar,.chat,.calls,.people,.settings,.chats,.call-list,.people-list,.settings-list,.chat-row,.person-row,.contact-row,.call-row,.settings-row{animation:none!important;transition:none!important}.bottom-nav button,.bottom-navigation button,.main-nav button,.app-nav button,.mobile-nav button,.tab-bar button{transition:none!important}}
