@@ -12,6 +12,12 @@ export const api={
  updateMe:async patch=>{const r=await request('/me',{method:'PATCH',body:JSON.stringify(patch)});return r.user},
  presence:()=>request('/presence',{method:'POST'}),
  users:async(q='')=>{const r=await request(`/users${q?`?q=${encodeURIComponent(q)}`:''}`);return r.users||[]},
+ friends:async()=>request('/friends'),
+ follow:async userId=>request(`/friends/follow/${encodeURIComponent(userId)}`,{method:'POST'}),
+ unfollow:async userId=>request(`/friends/follow/${encodeURIComponent(userId)}`,{method:'DELETE'}),
+ sendFriendRequest:async userId=>request('/friends/requests',{method:'POST',body:JSON.stringify({userId})}),
+ respondFriendRequest:async(id,status)=>request(`/friends/requests/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({status})}),
+ removeFriend:async userId=>request(`/friends/${encodeURIComponent(userId)}`,{method:'DELETE'}),
  messages:async withUser=>{const r=await request(`/messages?with=${encodeURIComponent(withUser)}`);return r.messages||[]},
  sendMessage:async(recipientId,body)=>{const r=await request('/messages',{method:'POST',body:JSON.stringify({recipientId,body})});return r.message},
  vybes:async()=>{const r=await request('/vybes');return r.vybes||[]},
@@ -21,29 +27,8 @@ export const api={
  commentVybe:async(id,body)=>{const r=await request(`/vybes/${encodeURIComponent(id)}/comments`,{method:'POST',body:JSON.stringify({body})});return r.comment},
  shareVybe:async id=>{const r=await request(`/vybes/${encodeURIComponent(id)}/share`,{method:'POST'});return r.vybe},
  sendCallSignal:(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})}),
- connectCalls:({onSignal,onOpen,onClose})=>{
-   let stopped=false,ws=null,retryTimer=null,retryDelay=1000;
-   const connect=()=>{
-     if(stopped)return;
-     const session=getSession();
-     if(!session?.token)return;
-     const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');
-     ws=new WebSocket(`${base}/call-ws?token=${encodeURIComponent(session.token)}`);
-     ws.onopen=()=>{retryDelay=1000;onOpen?.()};
-     ws.onmessage=event=>{try{onSignal?.(JSON.parse(event.data))}catch{}};
-     ws.onerror=()=>{};
-     ws.onclose=()=>{onClose?.();if(!stopped){retryTimer=setTimeout(connect,retryDelay);retryDelay=Math.min(retryDelay*2,15000)}};
-   };
-   connect();
-   return ()=>{stopped=true;if(retryTimer)clearTimeout(retryTimer);try{ws?.close()}catch{}};
- },
- connectChat:({otherUserId,onMessage,onOpen,onClose})=>{
-   const session=getSession();if(!session?.token)return ()=>{};
-   const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');
-   const ws=new WebSocket(`${base}/ws?b=${encodeURIComponent(otherUserId)}&token=${encodeURIComponent(session.token)}`);
-   ws.onopen=()=>onOpen?.();ws.onmessage=event=>{try{onMessage?.(JSON.parse(event.data))}catch{}};ws.onclose=()=>onClose?.();
-   return ()=>{try{ws.close()}catch{}};
- }
+ connectCalls:({onSignal,onOpen,onClose})=>{let stopped=false,ws=null,retryTimer=null,retryDelay=1000;const connect=()=>{if(stopped)return;const session=getSession();if(!session?.token)return;const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');ws=new WebSocket(`${base}/call-ws?token=${encodeURIComponent(session.token)}`);ws.onopen=()=>{retryDelay=1000;onOpen?.()};ws.onmessage=event=>{try{onSignal?.(JSON.parse(event.data))}catch{}};ws.onerror=()=>{};ws.onclose=()=>{onClose?.();if(!stopped){retryTimer=setTimeout(connect,retryDelay);retryDelay=Math.min(retryDelay*2,15000)}}};connect();return()=>{stopped=true;if(retryTimer)clearTimeout(retryTimer);try{ws?.close()}catch{}}},
+ connectChat:({otherUserId,onMessage,onOpen,onClose})=>{const session=getSession();if(!session?.token)return()=>{};const base=API_BASE.replace(/^http/,'ws').replace(/\/api$/,'');const ws=new WebSocket(`${base}/ws?b=${encodeURIComponent(otherUserId)}&token=${encodeURIComponent(session.token)}`);ws.onopen=()=>onOpen?.();ws.onmessage=event=>{try{onMessage?.(JSON.parse(event.data))}catch{}};ws.onclose=()=>onClose?.();return()=>{try{ws.close()}catch{}}}
 };
 export const API_BASE_URL=API_BASE.replace(/\/api$/,'');
 export const mediaUrl=value=>value?.startsWith?.('data:')?value:'';
