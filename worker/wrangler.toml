@@ -1,5 +1,5 @@
 name = "zuno-api"
-main = "src/index.js"
+main = "src/pulse-index.js"
 compatibility_date = "2026-08-27"
 
 [[d1_databases]]
