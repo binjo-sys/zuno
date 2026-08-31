@@ -20,7 +20,7 @@ export const api={
  likeVybe:async id=>{const r=await request(`/vybes/${encodeURIComponent(id)}/like`,{method:'POST'});return r.vybe},
  commentVybe:async(id,body)=>{const r=await request(`/vybes/${encodeURIComponent(id)}/comments`,{method:'POST',body:JSON.stringify({body})});return r.comment},
  shareVybe:async id=>{const r=await request(`/vybes/${encodeURIComponent(id)}/share`,{method:'POST'});return r.vybe},
- sendCallSignal:(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})),
+ sendCallSignal:(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})}),
  connectCalls:({onSignal,onOpen,onClose})=>{
    let stopped=false,ws=null,retryTimer=null,retryDelay=1000;
    const connect=()=>{
