@@ -1,3 +1,4 @@
+import './pulse-enhancements.css';
 import { api, getSession } from './lib/api';
 
 const ID='pulse-live-discover';
@@ -23,7 +24,6 @@ async function render(){
     try{await api.follow(id);btn.textContent='Following ✓';btn.classList.add('connected');}catch(e){btn.disabled=false;btn.textContent='Try again';}
   }));
 }
-
 let timer=null;
 const observer=new MutationObserver(()=>{clearTimeout(timer);timer=setTimeout(render,120)});
 observer.observe(document.getElementById('root')||document.body,{childList:true,subtree:true});
