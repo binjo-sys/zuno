@@ -1,11 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 
-const CORS={"content-type":"application/json","access-control-allow-origin":"*","access-control-allow-headers":"content-type, authorization","access-control-allow-methods":"GET,POST,PATCH,OPTIONS"};
+const CORS={"content-type":"application/json","access-control-allow-origin":"*","access-control-allow-headers":"content-type, authorization","access-control-allow-methods":"GET,POST,PATCH,DELETE,OPTIONS"};
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:CORS});
 const normalizePhone=(value="")=>{const raw=String(value).trim().replace(/[\s()-]/g,"");if(/^\+254[17]\d{8}$/.test(raw))return raw;if(/^254[17]\d{8}$/.test(raw))return `+${raw}`;if(/^0[17]\d{8}$/.test(raw))return `+254${raw.slice(1)}`;return raw;};
 const hash=async(value)=>{const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,"0")).join("");};
 const publicUser=u=>({id:u.id,name:u.name,phone:u.phone,avatar:u.avatar||"",username:u.username||"",about:u.about||"",createdAt:u.created_at,lastSeen:u.last_seen||0});
 const validUsername=v=>typeof v==="string"&&/^[A-Za-z0-9_]{3,24}$/.test(v);
+const publicVybe=r=>({id:r.id,body:r.body,image:r.image||"",createdAt:r.created_at,user:{id:r.user_id,name:r.name,username:r.username||"",avatar:r.avatar||""},likes:Number(r.likes||0),comments:Number(r.comments||0),shares:Number(r.shares||0),liked:Boolean(r.liked)});
 
 async function sessionToken(env,userId){const token=crypto.randomUUID()+crypto.randomUUID();const sessionId=await hash(token);const createdAt=Date.now();const expiresAt=createdAt+30*24*60*60*1000;await env.DB.prepare("INSERT INTO sessions(id,user_id,expires_at,created_at) VALUES(?,?,?,?)").bind(sessionId,userId,expiresAt,createdAt).run();return token;}
 async function authByToken(token,env){if(!token)return null;const sessionId=await hash(token);const row=await env.DB.prepare(`SELECT s.id AS session_id,s.user_id,s.expires_at,u.id,u.name,u.phone,u.avatar,u.username,u.about,u.last_seen,u.password_hash,u.created_at,u.updated_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.id=?`).bind(sessionId).first();if(!row||Date.now()>=row.expires_at){if(row)await env.DB.prepare("DELETE FROM sessions WHERE id=?").bind(row.session_id).run();return null;}return {sessionId:row.session_id,user:row};}
@@ -56,6 +57,65 @@ export default{async fetch(request,env){
 
     const a=await auth(request,env);
     if(!a)return json({error:"Authentication required."},401);
+
+    if(url.pathname==="/api/vybes"&&request.method==="GET"){
+      const rows=await env.DB.prepare(`SELECT v.id,v.user_id,v.body,v.image,v.created_at,u.name,u.username,u.avatar,
+        (SELECT COUNT(*) FROM vybe_likes l WHERE l.vybe_id=v.id) likes,
+        (SELECT COUNT(*) FROM vybe_comments c WHERE c.vybe_id=v.id) comments,
+        (SELECT COUNT(*) FROM vybe_shares s WHERE s.vybe_id=v.id) shares,
+        EXISTS(SELECT 1 FROM vybe_likes ml WHERE ml.vybe_id=v.id AND ml.user_id=?) liked
+        FROM vybes v JOIN users u ON u.id=v.user_id ORDER BY v.created_at DESC LIMIT 100`).bind(a.user.id).all();
+      return json({vybes:rows.results.map(publicVybe)});
+    }
+
+    if(url.pathname==="/api/vybes"&&request.method==="POST"){
+      const b=await request.json();const body=typeof b.body==="string"?b.body.trim():"";const image=typeof b.image==="string"?b.image:"";
+      if(!body&&!image)return json({error:"Write something or add a photo."},400);
+      if(body.length>2000)return json({error:"VYBE text must be 2000 characters or fewer."},400);
+      if(image.length>1500000)return json({error:"Photo is too large. Choose an image under 1MB."},400);
+      if(image&&!/^data:image\/(jpeg|jpg|png|webp|gif);base64,/i.test(image))return json({error:"Unsupported image format."},400);
+      const id=crypto.randomUUID(),now=Date.now();
+      await env.DB.prepare("INSERT INTO vybes(id,user_id,body,image,created_at) VALUES(?,?,?,?,?)").bind(id,a.user.id,body,image,now).run();
+      return json({vybe:publicVybe({id,user_id:a.user.id,body,image,created_at:now,name:a.user.name,username:a.user.username,avatar:a.user.avatar,likes:0,comments:0,shares:0,liked:false})},201);
+    }
+
+    const vybeMatch=url.pathname.match(/^\/api\/vybes\/([^/]+)$/);
+    if(vybeMatch&&request.method==="DELETE"){
+      const id=decodeURIComponent(vybeMatch[1]);const v=await env.DB.prepare("SELECT id FROM vybes WHERE id=? AND user_id=?").bind(id,a.user.id).first();
+      if(!v)return json({error:"VYBE not found or you do not own it."},404);
+      await env.DB.batch([env.DB.prepare("DELETE FROM vybe_likes WHERE vybe_id=?").bind(id),env.DB.prepare("DELETE FROM vybe_comments WHERE vybe_id=?").bind(id),env.DB.prepare("DELETE FROM vybe_shares WHERE vybe_id=?").bind(id),env.DB.prepare("DELETE FROM vybes WHERE id=?").bind(id)]);
+      return json({ok:true});
+    }
+
+    const likeMatch=url.pathname.match(/^\/api\/vybes\/([^/]+)\/like$/);
+    if(likeMatch&&request.method==="POST"){
+      const id=decodeURIComponent(likeMatch[1]);if(!await env.DB.prepare("SELECT id FROM vybes WHERE id=?").bind(id).first())return json({error:"VYBE not found."},404);
+      const existing=await env.DB.prepare("SELECT 1 FROM vybe_likes WHERE vybe_id=? AND user_id=?").bind(id,a.user.id).first();
+      if(existing)await env.DB.prepare("DELETE FROM vybe_likes WHERE vybe_id=? AND user_id=?").bind(id,a.user.id).run();else await env.DB.prepare("INSERT INTO vybe_likes(vybe_id,user_id,created_at) VALUES(?,?,?)").bind(id,a.user.id,Date.now()).run();
+      const row=await env.DB.prepare(`SELECT v.id,v.user_id,v.body,v.image,v.created_at,u.name,u.username,u.avatar,(SELECT COUNT(*) FROM vybe_likes WHERE vybe_id=v.id) likes,(SELECT COUNT(*) FROM vybe_comments WHERE vybe_id=v.id) comments,(SELECT COUNT(*) FROM vybe_shares WHERE vybe_id=v.id) shares,EXISTS(SELECT 1 FROM vybe_likes WHERE vybe_id=v.id AND user_id=?) liked FROM vybes v JOIN users u ON u.id=v.user_id WHERE v.id=?`).bind(a.user.id,id).first();
+      return json({vybe:publicVybe(row)});
+    }
+
+    const commentMatch=url.pathname.match(/^\/api\/vybes\/([^/]+)\/comments$/);
+    if(commentMatch&&request.method==="GET"){
+      const id=decodeURIComponent(commentMatch[1]);const rows=await env.DB.prepare("SELECT c.id,c.vybe_id,c.user_id,c.body,c.created_at,u.name,u.username,u.avatar FROM vybe_comments c JOIN users u ON u.id=c.user_id WHERE c.vybe_id=? ORDER BY c.created_at ASC LIMIT 200").bind(id).all();
+      return json({comments:rows.results.map(c=>({id:c.id,vybeId:c.vybe_id,body:c.body,createdAt:c.created_at,user:{id:c.user_id,name:c.name,username:c.username||"",avatar:c.avatar||""}}))});
+    }
+    if(commentMatch&&request.method==="POST"){
+      const id=decodeURIComponent(commentMatch[1]);const b=await request.json();const body=typeof b.body==="string"?b.body.trim():"";
+      if(!body)return json({error:"Comment cannot be empty."},400);if(body.length>500)return json({error:"Comment must be 500 characters or fewer."},400);if(!await env.DB.prepare("SELECT id FROM vybes WHERE id=?").bind(id).first())return json({error:"VYBE not found."},404);
+      const cid=crypto.randomUUID(),now=Date.now();await env.DB.prepare("INSERT INTO vybe_comments(id,vybe_id,user_id,body,created_at) VALUES(?,?,?,?,?)").bind(cid,id,a.user.id,body,now).run();
+      return json({comment:{id:cid,vybeId:id,body,createdAt:now,user:{id:a.user.id,name:a.user.name,username:a.user.username||"",avatar:a.user.avatar||""}}},201);
+    }
+
+    const shareMatch=url.pathname.match(/^\/api\/vybes\/([^/]+)\/share$/);
+    if(shareMatch&&request.method==="POST"){
+      const id=decodeURIComponent(shareMatch[1]);if(!await env.DB.prepare("SELECT id FROM vybes WHERE id=?").bind(id).first())return json({error:"VYBE not found."},404);
+      const existing=await env.DB.prepare("SELECT 1 FROM vybe_shares WHERE vybe_id=? AND user_id=?").bind(id,a.user.id).first();
+      if(!existing)await env.DB.prepare("INSERT INTO vybe_shares(vybe_id,user_id,created_at) VALUES(?,?,?)").bind(id,a.user.id,Date.now()).run();
+      const row=await env.DB.prepare(`SELECT v.id,v.user_id,v.body,v.image,v.created_at,u.name,u.username,u.avatar,(SELECT COUNT(*) FROM vybe_likes WHERE vybe_id=v.id) likes,(SELECT COUNT(*) FROM vybe_comments WHERE vybe_id=v.id) comments,(SELECT COUNT(*) FROM vybe_shares WHERE vybe_id=v.id) shares,EXISTS(SELECT 1 FROM vybe_likes WHERE vybe_id=v.id AND user_id=?) liked FROM vybes v JOIN users u ON u.id=v.user_id WHERE v.id=?`).bind(a.user.id,id).first();
+      return json({vybe:publicVybe(row)});
+    }
 
     if(url.pathname==="/api/presence"&&request.method==="POST"){
       const now=Date.now();await env.DB.prepare("UPDATE users SET last_seen=?,updated_at=? WHERE id=?").bind(now,now,a.user.id).run();return json({ok:true,lastSeen:now});
