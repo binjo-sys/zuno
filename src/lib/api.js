@@ -14,7 +14,13 @@ export const api={
  users:async(q='')=>{const r=await request(`/users${q?`?q=${encodeURIComponent(q)}`:''}`);return r.users||[]},
  messages:async withUser=>{const r=await request(`/messages?with=${encodeURIComponent(withUser)}`);return r.messages||[]},
  sendMessage:async(recipientId,body)=>{const r=await request('/messages',{method:'POST',body:JSON.stringify({recipientId,body})});return r.message},
- sendCallSignal:(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})}),
+ vybes:async()=>{const r=await request('/vybes');return r.vybes||[]},
+ createVybe:async(body,image='')=>{const r=await request('/vybes',{method:'POST',body:JSON.stringify({body,image})});return r.vybe},
+ deleteVybe:async id=>request(`/vybes/${encodeURIComponent(id)}`,{method:'DELETE'}),
+ likeVybe:async id=>{const r=await request(`/vybes/${encodeURIComponent(id)}/like`,{method:'POST'});return r.vybe},
+ commentVybe:async(id,body)=>{const r=await request(`/vybes/${encodeURIComponent(id)}/comments`,{method:'POST',body:JSON.stringify({body})});return r.comment},
+ shareVybe:async id=>{const r=await request(`/vybes/${encodeURIComponent(id)}/share`,{method:'POST'});return r.vybe},
+ sendCallSignal:(recipientId,signal)=>request('/call-signal',{method:'POST',body:JSON.stringify({recipientId,signal})),
  connectCalls:({onSignal,onOpen,onClose})=>{
    let stopped=false,ws=null,retryTimer=null,retryDelay=1000;
    const connect=()=>{
