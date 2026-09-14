@@ -8,5 +8,18 @@
 <link rel="icon" type="image/svg+xml" href="./washhub-logo.svg" />
 <title>WashHub | Fresh clothes. Zero stress.</title>
 </head>
-<body><div id="root"></div><script type="module" src="./src/main.jsx"></script></body>
+<body><div id="root"></div><script type="module" src="./src/main.jsx"></script><script>
+document.addEventListener('submit',function(e){
+  var f=e.target;
+  if(!f.classList.contains('booking'))return;
+  var inputs=f.querySelectorAll('input');
+  var name=inputs[0]?.value||'';
+  var phone=inputs[1]?.value||'';
+  var service=f.querySelector('select')?.value||'';
+  var date=inputs[2]?.value||'Not specified';
+  var message=f.querySelector('textarea')?.value||'None';
+  var text='Hello WashHub! 👋\\n\\nI\'d like to book a laundry pickup.\\n\\n*Name:* '+name+'\\n*Phone:* '+phone+'\\n*Service:* '+service+'\\n*Preferred date:* '+date+'\\n*Message:* '+message+'\\n\\nPlease let me know the pickup details and price. Thank you!';
+  window.open('https://wa.me/254768943609?text='+encodeURIComponent(text),'_blank','noopener,noreferrer');
+},true);
+</script></body>
 </html>
